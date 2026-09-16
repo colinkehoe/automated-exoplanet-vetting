@@ -1,0 +1,31 @@
+[project]
+name = "exovet"
+version = "0.1.0"
+description = "Automated vetting of TESS transiting exoplanet candidates"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [{ name = "Colin Kehoe", email = "kehoecolin012@gmail.com" }]
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "astropy>=6.0",
+    "lightkurve>=2.5",
+    "scikit-learn>=1.4",
+    "joblib>=1.3",
+]
+
+[project.scripts]
+exovet = "exovet.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 100
