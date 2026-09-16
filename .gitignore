@@ -8,8 +8,8 @@ dist/
 build/
 
 # Local data and model artifacts
-data/
-cache/
-models/
+/data/
+/cache/
+/models/
 *.joblib
 .DS_Store
