@@ -38,10 +38,28 @@ def fetch_lightcurve(
     try:
         collection = search.download_all(download_dir=str(download_dir))
     except lk.LightkurveError:
-        # A cached file is corrupt (e.g. an interrupted download); fetch it again.
-        collection = search.download_all(download_dir=str(download_dir), cache=False)
+        # A cached file is corrupt (e.g. an interrupted download). lightkurve
+        # reads any file already at the cache path, so delete them and refetch.
+        for path in _cached_paths(search, download_dir):
+            path.unlink(missing_ok=True)
+        collection = search.download_all(download_dir=str(download_dir))
     # lightkurve's default quality bitmask has already dropped flagged cadences.
     return collection.stitch().remove_nans()
+
+
+def _cached_paths(search, download_dir: Path) -> list[Path]:
+    """Where lightkurve caches each product (mirrors ``SearchResult._download_one``)."""
+    table = search.table
+    return [
+        Path(
+            download_dir,
+            "mastDownload",
+            row["obs_collection"],
+            row["obs_id"],
+            row["productFilename"],
+        )
+        for row in table
+    ]
 
 
 def detrend(lc, cand: Candidate, window_durations: float = 3.0):
