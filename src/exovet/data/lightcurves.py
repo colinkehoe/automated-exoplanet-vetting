@@ -35,7 +35,11 @@ def fetch_lightcurve(
         search = search[:max_sectors]
     download_dir = Path(download_dir)
     download_dir.mkdir(parents=True, exist_ok=True)
-    collection = search.download_all(download_dir=str(download_dir))
+    try:
+        collection = search.download_all(download_dir=str(download_dir))
+    except lk.LightkurveError:
+        # A cached file is corrupt (e.g. an interrupted download); fetch it again.
+        collection = search.download_all(download_dir=str(download_dir), cache=False)
     # lightkurve's default quality bitmask has already dropped flagged cadences.
     return collection.stitch().remove_nans()
 

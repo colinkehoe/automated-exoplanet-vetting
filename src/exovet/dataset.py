@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 import pandas as pd
@@ -56,8 +56,8 @@ def build_dataset(
     labeled = labeled[~labeled["TOI"].isin(done)]
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    # Downloads dominate the runtime, so threads parallelize well.
-    with ThreadPoolExecutor(max_workers=workers) as pool:
+    # Processes rather than threads: lightkurve/astropy FITS reading is not thread-safe.
+    with ProcessPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(_features_for, row, author) for _, row in labeled.iterrows()]
         for i, future in enumerate(as_completed(futures), 1):
             record = future.result()
