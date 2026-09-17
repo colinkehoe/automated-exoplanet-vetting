@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from exovet.data.lightcurves import DEFAULT_AUTHORS
 from exovet.data.toi import DEFAULT_CACHE, find_toi, load_toi_catalog
 from exovet.dataset import DEFAULT_CANDIDATES, DEFAULT_DATASET, TARGET_TIMEOUT, build_dataset
 from exovet.model import DEFAULT_MODEL, VettingModel, rank_candidates, train
@@ -16,13 +17,20 @@ from exovet.model import DEFAULT_MODEL, VettingModel, rank_candidates, train
 log = logging.getLogger(__name__)
 
 
+AUTHORS_HELP = "comma-separated pipelines to try in order, e.g. SPOC,QLP"
+
+
+def _authors(value: str) -> tuple[str, ...]:
+    return tuple(part.strip() for part in value.split(",") if part.strip())
+
+
 def cmd_vet(args: argparse.Namespace) -> None:
     from exovet.data.lightcurves import load_detrended
     from exovet.features import compute_features
 
     cand = find_toi(load_toi_catalog(args.catalog), args.toi)
-    time, flux, centroids = load_detrended(cand, author=args.author)
-    features = compute_features(time, flux, cand, centroids)
+    lc = load_detrended(cand, authors=args.authors)
+    features = compute_features(lc.time, lc.flux, cand, lc.centroids)
 
     result = {"candidate": cand.name, "features": features}
     if args.model.exists():
@@ -42,7 +50,7 @@ def cmd_build_dataset(args: argparse.Namespace) -> None:
         catalog,
         out=args.out,
         limit=args.limit,
-        author=args.author,
+        authors=args.authors,
         workers=args.workers,
         timeout=args.timeout,
         labeled=not args.unlabeled,
@@ -93,13 +101,13 @@ def main(argv: list[str] | None = None) -> None:
     vet = sub.add_parser("vet", help="vet a single TOI")
     vet.add_argument("toi", help="TOI number, e.g. 700.01")
     vet.add_argument("--model", type=Path, default=DEFAULT_MODEL)
-    vet.add_argument("--author", default="SPOC")
+    vet.add_argument("--authors", type=_authors, default=DEFAULT_AUTHORS, help=AUTHORS_HELP)
     vet.set_defaults(func=cmd_vet)
 
     build = sub.add_parser("build-dataset", help="compute features for dispositioned TOIs")
     build.add_argument("--out", type=Path, default=DEFAULT_DATASET)
     build.add_argument("--limit", type=int)
-    build.add_argument("--author", default="SPOC")
+    build.add_argument("--authors", type=_authors, default=DEFAULT_AUTHORS, help=AUTHORS_HELP)
     build.add_argument("--workers", type=int, default=4, help="parallel downloads")
     build.add_argument(
         "--timeout", type=float, default=TARGET_TIMEOUT, help="seconds before a target is killed"

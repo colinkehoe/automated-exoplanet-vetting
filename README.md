@@ -54,6 +54,12 @@ uv run exovet -v build-dataset --unlabeled --detection SPOC \
 uv run exovet score                          # rank those candidates by planet probability
 ```
 
+`--authors SPOC,QLP` tries each pipeline in turn and takes the first with data, which
+reaches fainter targets that SPOC never observed at 2-minute cadence. QLP light curves
+carry no centroids, so those features come out empty, and the rows record which
+pipeline they came from. A model trained on SPOC rows should not be trusted on QLP
+rows without checking.
+
 `build-dataset` appends to `data/features.csv` as it goes, so you can interrupt it and
 run it again to resume. Each run first refreshes labels and catalog-only features for
 existing rows (`--limit 0` does only that). Targets that stall are killed after

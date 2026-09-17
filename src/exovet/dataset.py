@@ -5,13 +5,13 @@ from __future__ import annotations
 import logging
 import multiprocessing as mp
 import time
-from collections.abc import Callable, Iterable, Iterator
+from collections.abc import Callable, Iterable, Iterator, Sequence
 from multiprocessing.connection import wait
 from pathlib import Path
 
 import pandas as pd
 
-from exovet.data.lightcurves import load_detrended
+from exovet.data.lightcurves import DEFAULT_AUTHORS, load_detrended
 from exovet.data.toi import row_to_candidate
 from exovet.features import catalog_features, compute_features
 
@@ -22,36 +22,36 @@ DEFAULT_CANDIDATES = Path("data/candidates.csv")
 TARGET_TIMEOUT = 600
 
 
-def _features_for(row: pd.Series, author: str) -> dict | None:
+def _features_for(row: pd.Series, authors: Sequence[str]) -> dict | None:
     cand = row_to_candidate(row)
     if cand is None:
         return None
     try:
-        t, flux, centroids = load_detrended(cand, author=author)
-        features = compute_features(t, flux, cand, centroids)
+        lc = load_detrended(cand, authors=authors)
+        features = compute_features(lc.time, lc.flux, cand, lc.centroids)
     except Exception as exc:  # noqa: BLE001 - network errors, missing data, corrupt files
         log.warning("Skipping %s: %s", cand.name, exc)
         return None
     label = row.get("label")
-    record = {"toi": cand.toi, "tic_id": cand.tic_id}
+    record = {"toi": cand.toi, "tic_id": cand.tic_id, "author": lc.author}
     if pd.notna(label):
         record["label"] = int(label)
     return {**record, **features}
 
 
-def _run_target(conn, target, row, author) -> None:
-    conn.send(target(row, author))
+def _run_target(conn, target, row, authors) -> None:
+    conn.send(target(row, authors))
     conn.close()
 
 
 def _iter_records(
     rows: Iterable[pd.Series],
-    author: str,
+    authors: Sequence[str],
     workers: int,
     timeout: float,
     target: Callable[[pd.Series, str], dict | None] = _features_for,
 ) -> Iterator[dict | None]:
-    """Yield ``target(row, author)`` for each row, in completion order.
+    """Yield ``target(row, authors)`` for each row, in completion order.
 
     Each row runs in its own process so the parent can kill it after
     ``timeout`` seconds. MAST downloads can stall in ways no in-process
@@ -67,7 +67,7 @@ def _iter_records(
         while pending and len(running) < workers:
             row = pending.pop()
             recv, send = ctx.Pipe(duplex=False)
-            proc = ctx.Process(target=_run_target, args=(send, target, row, author), daemon=True)
+            proc = ctx.Process(target=_run_target, args=(send, target, row, authors), daemon=True)
             proc.start()
             send.close()
             running[recv] = (proc, row["TOI"], time.monotonic())
@@ -134,7 +134,7 @@ def build_dataset(
     catalog: pd.DataFrame,
     out: Path = DEFAULT_DATASET,
     limit: int | None = None,
-    author: str = "SPOC",
+    authors: Sequence[str] = DEFAULT_AUTHORS,
     workers: int = 4,
     seed: int = 0,
     timeout: float = TARGET_TIMEOUT,
@@ -174,7 +174,7 @@ def build_dataset(
     targets = targets[~targets["TOI"].isin(done)]
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    records = _iter_records((row for _, row in targets.iterrows()), author, workers, timeout)
+    records = _iter_records((row for _, row in targets.iterrows()), authors, workers, timeout)
     for i, record in enumerate(records, 1):
         if record is None:
             continue

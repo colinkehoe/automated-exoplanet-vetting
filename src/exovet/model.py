@@ -20,7 +20,7 @@ from sklearn.pipeline import make_pipeline
 from exovet.diagnostics.stellar import BACKFILLED_FEATURES
 
 DEFAULT_MODEL = Path("models/exovet.joblib")
-NON_FEATURE_COLUMNS = {"toi", "tic_id", "label"}
+NON_FEATURE_COLUMNS = {"toi", "tic_id", "label", "author"}
 BACKGROUND_SIZE = 50
 
 

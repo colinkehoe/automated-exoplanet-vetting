@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import functools
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
@@ -13,6 +15,9 @@ from exovet.diagnostics.folding import in_transit_mask
 
 DEFAULT_DOWNLOAD_DIR = Path("cache/lightcurves")
 MAX_SECTORS = 10
+# Pipelines to try in order. SPOC has 2-minute light curves with centroids; QLP
+# covers many fainter targets from the full-frame images, without centroids.
+DEFAULT_AUTHORS = ("SPOC",)
 # (connect, read) seconds; the read timeout bounds a stall, not a whole download.
 HTTP_TIMEOUT = (30, 120)
 
@@ -36,25 +41,47 @@ def enforce_http_timeout(timeout: tuple[float, float] = HTTP_TIMEOUT) -> None:
     HTTPAdapter.send = send
 
 
+@dataclass(frozen=True)
+class LightCurveData:
+    """Detrended light curve of one target, and where it came from."""
+
+    time: np.ndarray
+    flux: np.ndarray
+    centroids: list[CentroidSeries]
+    author: str
+
+
+def search_sectors(tic_id: int, author: str):
+    """Search one pipeline's light curves for a target."""
+    import lightkurve as lk
+
+    enforce_http_timeout()
+    # SPOC is restricted to 2-minute cadence so sectors stitch cleanly; other
+    # pipelines take whatever cadence is available.
+    exptime = 120 if author == "SPOC" else None
+    return lk.search_lightcurve(f"TIC {tic_id}", mission="TESS", author=author, exptime=exptime)
+
+
 def fetch_sectors(
     tic_id: int,
-    author: str = "SPOC",
+    authors: Sequence[str] = DEFAULT_AUTHORS,
     download_dir: Path = DEFAULT_DOWNLOAD_DIR,
     max_sectors: int | None = MAX_SECTORS,
 ):
     """Download up to ``max_sectors`` sectors for a target, one light curve each.
 
-    SPOC is restricted to 2-minute cadence so sectors stitch cleanly; other
-    pipelines (e.g. QLP) take whatever cadence is available. The sector cap
-    keeps targets in the continuous viewing zone (~40 sectors) tractable.
+    Pipelines in ``authors`` are tried in order and the first with data wins.
+    The sector cap keeps targets in the continuous viewing zone (~40 sectors)
+    tractable.
     """
     import lightkurve as lk
 
-    enforce_http_timeout()
-    exptime = 120 if author == "SPOC" else None
-    search = lk.search_lightcurve(f"TIC {tic_id}", mission="TESS", author=author, exptime=exptime)
-    if len(search) == 0:
-        raise LookupError(f"No {author} light curves for TIC {tic_id}")
+    for author in authors:
+        search = search_sectors(tic_id, author)
+        if len(search):
+            break
+    else:
+        raise LookupError(f"No {'/'.join(authors)} light curves for TIC {tic_id}")
     if max_sectors is not None:
         search = search[:max_sectors]
     download_dir = Path(download_dir)
@@ -70,14 +97,22 @@ def fetch_sectors(
     return collection
 
 
-def centroid_series(lc) -> CentroidSeries:
-    """Flux-weighted centroids of one sector, keeping only unflagged cadences."""
+def _values(column) -> np.ndarray:
+    return np.asarray(getattr(column, "value", column), dtype=float)
+
+
+def centroid_series(lc) -> CentroidSeries | None:
+    """Flux-weighted centroids of one sector, keeping only unflagged cadences.
+
+    None when the pipeline provides no usable centroids, as QLP does not.
+    """
+    if any(getattr(lc, name, None) is None for name in ("centroid_col", "centroid_row")):
+        return None
+    col, row = _values(lc.centroid_col), _values(lc.centroid_row)
+    if np.all(np.isnan(col)) or np.all(np.isnan(row)):
+        return None
     good = np.asarray(lc.quality) == 0
-    return CentroidSeries(
-        np.asarray(lc.time.value, dtype=float)[good],
-        np.asarray(lc.centroid_col.value, dtype=float)[good],
-        np.asarray(lc.centroid_row.value, dtype=float)[good],
-    )
+    return CentroidSeries(_values(lc.time)[good], col[good], row[good])
 
 
 def _cached_paths(search, download_dir: Path) -> list[Path]:
@@ -113,11 +148,11 @@ def to_arrays(lc) -> tuple[np.ndarray, np.ndarray]:
     return time[good], flux[good]
 
 
-def load_detrended(
-    cand: Candidate, author: str = "SPOC"
-) -> tuple[np.ndarray, np.ndarray, list[CentroidSeries]]:
-    """Detrended time and flux, plus each sector's centroids."""
-    sectors = fetch_sectors(cand.tic_id, author=author)
+def load_detrended(cand: Candidate, authors: Sequence[str] = DEFAULT_AUTHORS) -> LightCurveData:
+    """Detrended light curve of a candidate's target, centroids where available."""
+    sectors = fetch_sectors(cand.tic_id, authors=authors)
     lc = sectors.stitch().remove_nans()
     time, flux = to_arrays(detrend(lc, cand))
-    return time, flux, [centroid_series(s) for s in sectors]
+    centroids = (centroid_series(s) for s in sectors)
+    author = str(sectors[0].meta.get("AUTHOR", authors[0]))
+    return LightCurveData(time, flux, [c for c in centroids if c is not None], author)
