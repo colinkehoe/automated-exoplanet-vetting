@@ -18,6 +18,7 @@ from exovet.features import catalog_features, compute_features
 log = logging.getLogger(__name__)
 
 DEFAULT_DATASET = Path("data/features.csv")
+DEFAULT_CANDIDATES = Path("data/candidates.csv")
 TARGET_TIMEOUT = 600
 
 
@@ -31,7 +32,11 @@ def _features_for(row: pd.Series, author: str) -> dict | None:
     except Exception as exc:  # noqa: BLE001 - network errors, missing data, corrupt files
         log.warning("Skipping %s: %s", cand.name, exc)
         return None
-    return {"toi": cand.toi, "tic_id": cand.tic_id, "label": int(row["label"]), **features}
+    label = row.get("label")
+    record = {"toi": cand.toi, "tic_id": cand.tic_id}
+    if pd.notna(label):
+        record["label"] = int(label)
+    return {**record, **features}
 
 
 def _run_target(conn, target, row, author) -> None:
@@ -101,19 +106,23 @@ def refresh_catalog_features(dataset: pd.DataFrame, catalog: pd.DataFrame) -> pd
         row = by_toi.loc[toi].copy()  # TOI numbers are unique in the catalog
         row["TOI"] = toi
         cand = row_to_candidate(row)
-        if cand is None or pd.isna(row["label"]):
+        if cand is None:
             continue
-        updates[toi] = {"label": int(row["label"]), **catalog_features(cand)}
+        label = {"label": int(row["label"])} if pd.notna(row["label"]) else {}
+        updates[toi] = {**label, **catalog_features(cand)}
     if not updates:
         return dataset
 
     fresh = pd.DataFrame.from_dict(updates, orient="index")
+    if "label" not in fresh:
+        fresh["label"] = float("nan")
     out = dataset.set_index("toi")
     for column in fresh.columns:
         if column not in out.columns:
             out[column] = float("nan")
     out.loc[fresh.index, fresh.columns] = fresh  # unlike update(), also copies NaN
-    out["label"] = out["label"].astype(int)
+    if out["label"].notna().all():
+        out["label"] = out["label"].astype(int)
     # Catalog features first, matching compute_features' order.
     base = ["tic_id", "label"]
     catalog_cols = [c for c in fresh.columns if c != "label"]
@@ -129,8 +138,16 @@ def build_dataset(
     workers: int = 4,
     seed: int = 0,
     timeout: float = TARGET_TIMEOUT,
+    labeled: bool = True,
+    detection: str | None = None,
 ) -> pd.DataFrame:
-    """Compute features for labeled TOIs, appending to ``out`` as it goes.
+    """Compute features for TOIs, appending to ``out`` as it goes.
+
+    With ``labeled`` the dispositioned TOIs are used, otherwise the unresolved
+    ones (PC/APC and undispositioned), whose rows carry no label and are meant
+    for scoring rather than training. ``detection`` keeps only TOIs whose
+    catalog Detection field mentions that pipeline, e.g. SPOC for the targets
+    that have 2-minute light curves.
 
     TOIs are visited in a seeded random order so a ``limit`` gives a
     representative sample rather than the (brighter, better-observed) earliest
@@ -147,13 +164,17 @@ def build_dataset(
         done = set(existing["toi"])
         columns = list(existing.columns)
 
-    labeled = catalog[catalog["label"].notna()].sample(frac=1, random_state=seed)
+    has_label = catalog["label"].notna()
+    targets = catalog[has_label if labeled else ~has_label]
+    if detection:
+        targets = targets[targets["Detection"].str.contains(detection, na=False)]
+    targets = targets.sample(frac=1, random_state=seed)
     if limit is not None:
-        labeled = labeled.head(limit)
-    labeled = labeled[~labeled["TOI"].isin(done)]
+        targets = targets.head(limit)
+    targets = targets[~targets["TOI"].isin(done)]
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    records = _iter_records((row for _, row in labeled.iterrows()), author, workers, timeout)
+    records = _iter_records((row for _, row in targets.iterrows()), author, workers, timeout)
     for i, record in enumerate(records, 1):
         if record is None:
             continue
@@ -161,6 +182,8 @@ def build_dataset(
         if columns is None:
             columns = list(row.columns)
         row[columns].to_csv(out, mode="a", header=not out.exists(), index=False)
-        log.info("[%d/%d] TOI-%s", i, len(labeled), record["toi"])
+        log.info("[%d/%d] TOI-%s", i, len(targets), record["toi"])
 
+    if not out.exists():  # every target failed, e.g. the archive is down
+        return pd.DataFrame()
     return pd.read_csv(out, dtype={"toi": str})

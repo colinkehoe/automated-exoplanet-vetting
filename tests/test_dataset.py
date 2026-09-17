@@ -61,3 +61,17 @@ def test_stalled_server_times_out(monkeypatch):
         with pytest.raises(requests.ReadTimeout):
             requests.get(f"http://127.0.0.1:{port}", timeout=None)
         assert time.monotonic() - start < 5
+
+
+def test_build_dataset_survives_every_target_failing(tmp_path, monkeypatch):
+    import pandas as pd
+
+    from exovet import dataset
+
+    monkeypatch.setattr(dataset, "_iter_records", lambda *a, **k: iter([None, None]))
+    catalog = pd.DataFrame(
+        {"TOI": ["1.01", "2.01"], "TIC ID": [1, 2], "label": [1.0, 0.0], "Detection": ["SPOC"] * 2}
+    )
+    out = tmp_path / "features.csv"
+    assert dataset.build_dataset(catalog, out=out).empty
+    assert not out.exists()

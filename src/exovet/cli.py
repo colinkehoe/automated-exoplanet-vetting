@@ -10,8 +10,8 @@ from pathlib import Path
 import pandas as pd
 
 from exovet.data.toi import DEFAULT_CACHE, find_toi, load_toi_catalog
-from exovet.dataset import DEFAULT_DATASET, TARGET_TIMEOUT, build_dataset
-from exovet.model import DEFAULT_MODEL, VettingModel, train
+from exovet.dataset import DEFAULT_CANDIDATES, DEFAULT_DATASET, TARGET_TIMEOUT, build_dataset
+from exovet.model import DEFAULT_MODEL, VettingModel, rank_candidates, train
 
 log = logging.getLogger(__name__)
 
@@ -42,6 +42,8 @@ def cmd_build_dataset(args: argparse.Namespace) -> None:
         author=args.author,
         workers=args.workers,
         timeout=args.timeout,
+        labeled=not args.unlabeled,
+        detection=args.detection,
     )
     print(f"{len(df)} rows in {args.out}")
 
@@ -51,6 +53,14 @@ def cmd_train(args: argparse.Namespace) -> None:
     model.save(args.out)
     print(json.dumps(metrics, indent=2))
     print(f"Saved model to {args.out}")
+
+
+def cmd_score(args: argparse.Namespace) -> None:
+    candidates = pd.read_csv(args.candidates, dtype={"toi": str})
+    ranked = rank_candidates(VettingModel.load(args.model), candidates)
+    ranked.to_csv(args.out, index=False)
+    print(ranked.head(args.top)[["toi", "tic_id", "planet_probability"]].to_string(index=False))
+    print(f"\n{len(ranked)} candidates scored -> {args.out}")
 
 
 def cmd_evaluate(args: argparse.Namespace) -> None:
@@ -85,6 +95,8 @@ def main(argv: list[str] | None = None) -> None:
         "--timeout", type=float, default=TARGET_TIMEOUT, help="seconds before a target is killed"
     )
     build.add_argument("--refresh", action="store_true", help="re-download the TOI catalog")
+    build.add_argument("--unlabeled", action="store_true", help="undispositioned TOIs, for scoring")
+    build.add_argument("--detection", help="only TOIs found by this pipeline, e.g. SPOC")
     build.set_defaults(func=cmd_build_dataset)
 
     tr = sub.add_parser("train", help="train the classifier")
@@ -92,6 +104,13 @@ def main(argv: list[str] | None = None) -> None:
     tr.add_argument("--out", type=Path, default=DEFAULT_MODEL)
     tr.add_argument("--folds", type=int, default=5)
     tr.set_defaults(func=cmd_train)
+
+    sc = sub.add_parser("score", help="rank candidates with a trained model")
+    sc.add_argument("--candidates", type=Path, default=DEFAULT_CANDIDATES)
+    sc.add_argument("--model", type=Path, default=DEFAULT_MODEL)
+    sc.add_argument("--out", type=Path, default=Path("data/ranked.csv"))
+    sc.add_argument("--top", type=int, default=20)
+    sc.set_defaults(func=cmd_score)
 
     ev = sub.add_parser("evaluate", help="grouped CV, temporal holdout and calibration")
     ev.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)

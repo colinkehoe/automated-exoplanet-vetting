@@ -100,6 +100,16 @@ def cross_validated_proba(dataset: pd.DataFrame, folds: int = 5, seed: int = 0) 
         )[:, 1]
 
 
+def rank_candidates(model: VettingModel, candidates: pd.DataFrame) -> pd.DataFrame:
+    """TOIs with their planet probability, most planet-like first."""
+    ranked = candidates.copy()
+    ranked["planet_probability"] = model.predict_proba(ranked)
+    columns = ["toi", "tic_id", "planet_probability"]
+    return ranked[columns + [c for c in ranked.columns if c not in columns]].sort_values(
+        "planet_probability", ascending=False, ignore_index=True
+    )
+
+
 def score(y: np.ndarray, proba: np.ndarray) -> dict[str, float]:
     return {
         "roc_auc": float(roc_auc_score(y, proba)),

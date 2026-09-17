@@ -48,6 +48,10 @@ uv run exovet -v build-dataset --limit 200   # download light curves, compute fe
 uv run exovet train                           # cross-validated metrics, then saves the model
 uv run exovet evaluate                        # grouped CV, temporal holdout, calibration
 uv run exovet vet 700.01                      # features plus planet probability
+
+uv run exovet -v build-dataset --unlabeled --detection SPOC \
+    --workers 6 --out data/candidates.csv    # features for undispositioned TOIs
+uv run exovet score                          # rank those candidates by planet probability
 ```
 
 `build-dataset` appends to `data/features.csv` as it goes, so you can interrupt it and

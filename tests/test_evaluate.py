@@ -31,3 +31,27 @@ def test_temporal_holdout_splits_on_alert_date():
     result = temporal_holdout(dataset, alerted, "2019-05-01")
     assert (result["n_train"], result["n_test"]) == (120, 80)
     assert result["roc_auc"] > 0.9
+
+
+def test_rank_candidates_orders_and_keeps_columns():
+    from exovet.model import fit, rank_candidates
+
+    rng = np.random.default_rng(0)
+    n = 120
+    label = rng.integers(0, 2, n)
+    train = pd.DataFrame(
+        {
+            "toi": [f"{i}.01" for i in range(n)],
+            "tic_id": np.arange(n),
+            "label": label,
+            "odd_even_sigma": np.where(label == 1, rng.normal(0, 1, n), rng.normal(8, 2, n)),
+        }
+    )
+    model = fit(train)
+    candidates = pd.DataFrame(
+        {"toi": ["9.01", "8.01"], "tic_id": [1, 2], "odd_even_sigma": [8.0, 0.0]}
+    )
+    ranked = rank_candidates(model, candidates)
+    assert list(ranked.columns[:3]) == ["toi", "tic_id", "planet_probability"]
+    assert ranked.toi.tolist() == ["8.01", "9.01"]  # planet-like first
+    assert ranked.planet_probability.is_monotonic_decreasing
