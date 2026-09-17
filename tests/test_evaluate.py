@@ -55,3 +55,24 @@ def test_rank_candidates_orders_and_keeps_columns():
     assert list(ranked.columns[:3]) == ["toi", "tic_id", "planet_probability"]
     assert ranked.toi.tolist() == ["8.01", "9.01"]  # planet-like first
     assert ranked.planet_probability.is_monotonic_decreasing
+
+
+def test_stratified_scores_reports_each_populated_bin():
+    from exovet.evaluate import stratified_scores
+
+    rng = np.random.default_rng(0)
+    n = 200
+    label = rng.integers(0, 2, n)
+    dataset = pd.DataFrame(
+        {
+            "label": label,
+            "star_teff": np.where(np.arange(n) % 2 == 0, 3500.0, 5500.0),
+            "star_distance": np.full(n, 50.0),
+            "star_radius": np.full(n, 1.0),
+        }
+    )
+    proba = np.where(label == 1, rng.uniform(0.5, 1, n), rng.uniform(0, 0.5, n))
+    table = stratified_scores(dataset, proba)
+    assert len(table) == 4  # two Teff bins, one distance bin, one radius bin
+    assert (table["roc_auc"] > 0.9).all()
+    assert table.loc["star_distance (0.0, 100.0]", "n"] == n

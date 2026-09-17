@@ -4,8 +4,18 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
+from sklearn.metrics import roc_auc_score
 
 from exovet.model import cross_validated_proba, fit, score
+
+# Host star bins, to check the model still ranks within one population rather
+# than mostly sorting candidates by what kind of star they orbit.
+STRATA = {
+    "star_teff": [0, 4000, 5300, 6000, np.inf],
+    "star_distance": [0, 100, 250, 500, np.inf],
+    "star_radius": [0, 1.5, np.inf],
+}
+MIN_STRATUM = 30
 
 ALERT_COLUMN = "Date TOI Alerted (UTC)"
 
@@ -25,6 +35,30 @@ def calibration_table(y: np.ndarray, proba: np.ndarray, bins: int = 10) -> pd.Da
     )
     out.index = [f"{edges[i]:.1f}-{edges[i + 1]:.1f}" for i in out.index]
     return out
+
+
+def stratified_scores(dataset: pd.DataFrame, proba: np.ndarray) -> pd.DataFrame:
+    """ROC-AUC within host star bins, alongside each bin's planet fraction."""
+    y = dataset["label"].astype(int).to_numpy()
+    rows = []
+    for column, edges in STRATA.items():
+        if column not in dataset:
+            continue
+        for stratum, index in dataset.groupby(
+            pd.cut(dataset[column], edges), observed=True
+        ).groups.items():
+            mask = dataset.index.isin(index)
+            if mask.sum() < MIN_STRATUM or len(np.unique(y[mask])) < 2:
+                continue
+            rows.append(
+                {
+                    "stratum": f"{column} {stratum}",
+                    "n": int(mask.sum()),
+                    "planet_fraction": float(y[mask].mean()),
+                    "roc_auc": float(roc_auc_score(y[mask], proba[mask])),
+                }
+            )
+    return pd.DataFrame(rows).set_index("stratum")
 
 
 def temporal_holdout(dataset: pd.DataFrame, alerted: pd.Series, cutoff: str) -> dict:
@@ -65,5 +99,6 @@ def evaluate(
             "std": runs.std(ddof=0).round(4).to_dict(),
         },
         "calibration": calibration_table(y, np.mean(probas, axis=0)).round(3),
+        "strata": stratified_scores(dataset, np.mean(probas, axis=0)).round(3),
         "temporal": temporal_holdout(dataset, alert_dates(dataset, catalog), cutoff),
     }

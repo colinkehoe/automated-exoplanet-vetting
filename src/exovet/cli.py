@@ -87,9 +87,12 @@ def cmd_evaluate(args: argparse.Namespace) -> None:
     dataset = pd.read_csv(args.dataset, dtype={"toi": str})
     report = evaluate(dataset, load_toi_catalog(args.catalog), cutoff=args.cutoff, seeds=args.seeds)
     calibration = report.pop("calibration")
+    strata = report.pop("strata")
     print(json.dumps(report, indent=2))
     print("\nCalibration (grouped CV, averaged over seeds):")
     print(calibration.to_string())
+    print("\nRanking within host star populations:")
+    print(strata.to_string())
 
 
 def main(argv: list[str] | None = None) -> None:

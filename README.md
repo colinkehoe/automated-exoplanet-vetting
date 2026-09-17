@@ -35,6 +35,11 @@ Feature groups, by grouped CV ROC-AUC: light curve and catalog only 0.890, + hos
 0.946, + centroid shift 0.951. Sigmoid calibration (on star-grouped folds) keeps the
 predicted probabilities close to the observed planet fraction.
 
+Within a fixed host star population the model still ranks well: grouped-CV ROC-AUC
+stays at 0.92-0.96 across bins of effective temperature, distance and stellar radius,
+against 0.954 overall. So it is reading transit evidence, not mostly sorting candidates
+by what kind of star they orbit. `exovet evaluate` prints this breakdown.
+
 Trimming the host star features was tested and rejected: an exhaustive search over
 the six groups (64 combinations) picked `star_teff + planet radius + duration ratio`,
 but across 5 CV seeds and three temporal cutoffs that set was no better than the full
