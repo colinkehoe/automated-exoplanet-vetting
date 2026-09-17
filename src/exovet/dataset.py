@@ -19,8 +19,13 @@ DEFAULT_DATASET = Path("data/features.csv")
 TARGET_TIMEOUT = 600
 
 
+class TargetTimeout(BaseException):
+    """Deliberately not an Exception: astroquery catches Exception from S3
+    downloads and falls back to a second, equally unbounded, MAST download."""
+
+
 def _raise_timeout(signum, frame):
-    raise TimeoutError("timed out")
+    raise TargetTimeout
 
 
 def _features_for(row: pd.Series, author: str, timeout: int) -> dict | None:
@@ -29,17 +34,20 @@ def _features_for(row: pd.Series, author: str, timeout: int) -> dict | None:
         return None
     # astroquery downloads have no read timeout, so a stalled connection would
     # block this worker forever. Tasks run on the worker's main thread, so an
-    # alarm can interrupt them.
+    # alarm can interrupt them. It keeps re-firing in case a handler swallows it.
     signal.signal(signal.SIGALRM, _raise_timeout)
-    signal.alarm(timeout)
+    signal.setitimer(signal.ITIMER_REAL, timeout, 30)
     try:
         time, flux, _ = load_detrended(cand, author=author)
         features = compute_features(time, flux, cand)
+    except TargetTimeout:
+        log.warning("Skipping %s: timed out after %d s", cand.name, timeout)
+        return None
     except Exception as exc:  # noqa: BLE001 - network errors, missing data, corrupt files
         log.warning("Skipping %s: %s", cand.name, exc)
         return None
     finally:
-        signal.alarm(0)
+        signal.setitimer(signal.ITIMER_REAL, 0)
     return {"toi": cand.toi, "tic_id": cand.tic_id, "label": int(row["label"]), **features}
 
 

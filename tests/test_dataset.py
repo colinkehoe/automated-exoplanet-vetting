@@ -1,12 +1,23 @@
 import time
 
 import pandas as pd
+import pytest
 
 from exovet import dataset
 
 
-def test_stalled_target_is_skipped(monkeypatch):
-    monkeypatch.setattr(dataset, "load_detrended", lambda cand, author: time.sleep(30))
+def _swallow_errors(cand, author):
+    # Like astroquery's S3-to-MAST fallback: catch Exception, then stall again.
+    try:
+        time.sleep(30)
+    except Exception:  # noqa: BLE001, S110
+        pass
+    time.sleep(30)
+
+
+@pytest.mark.parametrize("stall", [lambda cand, author: time.sleep(30), _swallow_errors])
+def test_stalled_target_is_skipped(monkeypatch, stall):
+    monkeypatch.setattr(dataset, "load_detrended", stall)
     row = pd.Series(
         {
             "TIC ID": 1,
