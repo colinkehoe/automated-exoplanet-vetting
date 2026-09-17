@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
+from astropy.io import fits
 
 from exovet.candidate import Candidate
 from exovet.diagnostics.centroid import CentroidSeries
@@ -15,6 +16,7 @@ from exovet.diagnostics.folding import in_transit_mask
 
 DEFAULT_DOWNLOAD_DIR = Path("cache/lightcurves")
 MAX_SECTORS = 10
+MIN_CADENCES = 100  # a sector with fewer usable cadences is not worth stitching
 # Pipelines to try in order. SPOC has 2-minute light curves with centroids; QLP
 # covers many fainter targets from the full-frame images, without centroids.
 DEFAULT_AUTHORS = ("SPOC",)
@@ -128,6 +130,33 @@ def _cached_paths(search, download_dir: Path) -> list[Path]:
         )
         for row in table
     ]
+
+
+def load_cached(cand: Candidate, download_dir: Path = DEFAULT_DOWNLOAD_DIR):
+    """Stitch whatever sectors are already in the download cache, without MAST.
+
+    Lets plots and exports be rebuilt offline from targets the dataset build
+    already fetched.
+    """
+    import lightkurve as lk
+
+    pattern = f"*-{cand.tic_id:016d}-*/*_lc.fits"
+    curves = []
+    for path in sorted(Path(download_dir, "mastDownload", "TESS").glob(pattern)):
+        with fits.open(path) as hdus:
+            data = hdus[1].data
+            good = (data["QUALITY"] == 0) & np.isfinite(data["PDCSAP_FLUX"])
+            if good.sum() < MIN_CADENCES:
+                continue
+            flux = np.asarray(data["PDCSAP_FLUX"][good], dtype=float)
+            curves.append(
+                lk.LightCurve(
+                    time=np.asarray(data["TIME"][good], dtype=float), flux=flux / np.nanmedian(flux)
+                )
+            )
+    if not curves:
+        raise LookupError(f"No cached light curves for TIC {cand.tic_id}")
+    return lk.LightCurveCollection(curves).stitch().remove_nans()
 
 
 def detrend(lc, cand: Candidate, window_durations: float = 3.0):

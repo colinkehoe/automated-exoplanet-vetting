@@ -1,0 +1,752 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>exovet — automated exoplanet vetting</title>
+    <meta
+      name="description"
+      content="Ranking TESS transit candidates by how likely they are to be real planets, with the evidence behind every score."
+    />
+    <meta name="theme-color" content="#0a0618" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=Spline+Sans:wght@400;500;600&family=Spline+Sans+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <style>
+      /* Tokens mirror the parent portfolio so the embed reads as one site.
+         Chart hues are stepped for the dark surface and validated for
+         colour-vision deficiency: violet/amber, never red/green. */
+      :root {
+        --void: #0a0618;
+        --surface: #14061b;
+        --surface-2: #1b0d26;
+        --line: #2a1b3d;
+        --ink: #f3ecff;
+        --ink-dim: #a99cc4;
+        --ink-faint: #6e6288;
+        --violet: #8b6bff;
+        --magenta: #ff4d9d;
+        --mint: #45e0b8;
+        --amber: #ffc23d;
+        --for: #8b6bff; /* evidence for a planet */
+        --against: #c18600; /* evidence against */
+        --display: "Bricolage Grotesque", Georgia, serif;
+        --sans: "Spline Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+        --mono: "Spline Sans Mono", ui-monospace, "SF Mono", Menlo, monospace;
+        --radius: 10px;
+      }
+      * { box-sizing: border-box; }
+      html { color-scheme: dark; }
+      body {
+        margin: 0;
+        background: var(--void);
+        color: var(--ink);
+        font: 400 15px/1.6 var(--sans);
+        -webkit-font-smoothing: antialiased;
+      }
+      .wrap { max-width: 1120px; margin: 0 auto; padding: 28px 16px 64px; }
+      a { color: var(--violet); }
+      h1, h2, h3 { font-family: var(--display); font-weight: 700; line-height: 1.2; margin: 0; }
+      h1 { font-size: clamp(24px, 4vw, 34px); }
+      h2 { font-size: clamp(19px, 2.6vw, 23px); margin-bottom: 8px; }
+      h3 { font-size: 16px; font-weight: 500; }
+      p { margin: 0 0 12px; color: var(--ink-dim); }
+      .lede { font-size: 17px; max-width: 68ch; }
+      .back { font: 500 13px/1 var(--mono); color: var(--ink-faint); text-decoration: none; }
+      .back:hover { color: var(--ink); }
+      header { margin-bottom: 20px; }
+      .meta { font: 400 12px/1.5 var(--mono); color: var(--ink-faint); margin-top: 6px; }
+
+      /* Tabs */
+      .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--line); margin: 20px 0 22px; flex-wrap: wrap; }
+      .tab {
+        appearance: none; background: none; border: 0; border-bottom: 2px solid transparent;
+        color: var(--ink-dim); font: 500 14px/1 var(--sans); padding: 10px 14px; cursor: pointer;
+      }
+      .tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--violet); }
+      .tab:hover { color: var(--ink); }
+      .panel[hidden] { display: none; }
+
+      /* Cards & layout */
+      .card {
+        background: var(--surface); border: 1px solid var(--line);
+        border-radius: var(--radius); padding: 16px;
+      }
+      .cols { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 16px; }
+      .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 10px; margin-bottom: 16px; }
+      .stat { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 12px 14px; }
+      .stat b { display: block; font: 700 22px/1.1 var(--display); color: var(--ink); }
+      .stat span { font: 400 12px/1.4 var(--mono); color: var(--ink-faint); }
+
+      /* Controls */
+      .controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+      input[type="search"], select {
+        background: var(--surface-2); color: var(--ink); border: 1px solid var(--line);
+        border-radius: 8px; padding: 8px 10px; font: 400 13px/1 var(--sans); min-height: 38px;
+      }
+      input[type="search"] { flex: 1 1 190px; }
+      input:focus-visible, select:focus-visible, .tab:focus-visible, tr:focus-visible, button:focus-visible {
+        outline: 2px solid var(--violet); outline-offset: 2px;
+      }
+
+      /* Table */
+      .table-wrap { max-height: 560px; overflow: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); white-space: nowrap; }
+      thead th {
+        position: sticky; top: 0; background: var(--surface-2); z-index: 1;
+        font: 500 12px/1.4 var(--mono); color: var(--ink-faint); text-transform: uppercase; letter-spacing: .04em;
+      }
+      tbody tr { cursor: pointer; }
+      tbody tr:hover { background: var(--surface-2); }
+      tbody tr[aria-selected="true"] { background: #241141; }
+      td.num, th.num { text-align: right; font-family: var(--mono); }
+      .score { display: inline-flex; align-items: center; gap: 7px; }
+      .score i { width: 34px; height: 5px; border-radius: 3px; background: var(--line); display: inline-block; position: relative; }
+      .score i::after { content: ""; position: absolute; inset: 0 auto 0 0; width: var(--w); border-radius: 3px; background: var(--violet); }
+
+      /* Detail */
+      .detail-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 2px; }
+      .detail-title b { font: 700 19px/1.2 var(--display); }
+      .pill { font: 500 11px/1 var(--mono); padding: 4px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-dim); }
+      .note { font-size: 13px; color: var(--ink-dim); border-left: 2px solid var(--line); padding-left: 10px; margin: 10px 0; }
+      .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px 14px; margin-top: 10px; }
+      .kv { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; border-bottom: 1px dotted var(--line); padding: 3px 0; }
+      .kv span { color: var(--ink-faint); font-family: var(--mono); }
+      .kv b { font-weight: 500; font-family: var(--mono); }
+      figure { margin: 0 0 14px; }
+      figcaption { font: 400 12px/1.5 var(--mono); color: var(--ink-faint); margin-top: 6px; }
+      .legend { display: flex; gap: 14px; flex-wrap: wrap; font: 400 12px/1 var(--mono); color: var(--ink-dim); margin-bottom: 6px; }
+      .legend b { display: inline-flex; align-items: center; gap: 5px; font-weight: 400; }
+      .swatch { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+
+      /* Caveats */
+      .caveats { border: 1px solid #4a3a12; background: #1d1405; border-radius: var(--radius); padding: 14px 16px; }
+      .caveats h3 { color: var(--amber); margin-bottom: 8px; }
+      .caveats ul { margin: 0; padding-left: 18px; color: var(--ink-dim); font-size: 14px; }
+      .caveats li { margin-bottom: 6px; }
+
+      /* Method */
+      .steps { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; }
+      .step b { font: 500 13px/1.4 var(--mono); color: var(--violet); display: block; margin-bottom: 4px; }
+      .diag { border-bottom: 1px solid var(--line); padding: 12px 0; }
+      .diag:last-child { border-bottom: 0; }
+      .diag b { color: var(--ink); }
+      .diag p { margin: 4px 0 0; font-size: 14px; }
+
+      svg { display: block; width: 100%; height: auto; overflow: visible; }
+      .tick { font: 400 10px var(--mono); fill: var(--ink-faint); }
+      .axis-label { font: 400 11px var(--mono); fill: var(--ink-faint); }
+      .bar-label { font: 400 11px var(--mono); fill: var(--ink-dim); }
+      .tip {
+        position: fixed; pointer-events: none; z-index: 20; background: #241141; color: var(--ink);
+        border: 1px solid var(--line); border-radius: 8px; padding: 6px 9px; font: 400 12px/1.5 var(--mono);
+        opacity: 0; transition: opacity .1s;
+      }
+      .muted { color: var(--ink-faint); }
+      .empty { padding: 28px; text-align: center; color: var(--ink-faint); }
+      @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } .table-wrap { max-height: 380px; } }
+      /* At thumb width the period column is the first thing worth losing. */
+      @media (max-width: 560px) {
+        th:nth-child(5), td:nth-child(5) { display: none; }
+        select { flex: 1 1 140px; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <a class="back" href="../">← colinkehoe.github.io/portfolio</a>
+        <h1 style="margin-top: 10px">Automated exoplanet vetting</h1>
+        <p class="lede">
+          Most TESS transit candidates are not planets. This model reads the light curve and the
+          host star, scores each candidate, and shows the evidence behind every score.
+        </p>
+        <p class="meta" id="meta"></p>
+      </header>
+
+      <div class="tabs" role="tablist">
+        <button class="tab" role="tab" id="tab-explorer" aria-controls="panel-explorer" aria-selected="true">Explorer</button>
+        <button class="tab" role="tab" id="tab-method" aria-controls="panel-method" aria-selected="false">How it works</button>
+        <button class="tab" role="tab" id="tab-results" aria-controls="panel-results" aria-selected="false">Results</button>
+      </div>
+
+      <section class="panel" id="panel-explorer" role="tabpanel" aria-labelledby="tab-explorer">
+        <div class="stats" id="explorer-stats"></div>
+        <div class="cols">
+          <div>
+            <div class="controls">
+              <input type="search" id="q" placeholder="Search TOI or TIC…" aria-label="Search by TOI or TIC" />
+              <select id="band" aria-label="Filter by score">
+                <option value="all">Any score</option>
+                <option value="high">0.90 and above</option>
+                <option value="mid">0.50 – 0.90</option>
+                <option value="low">Below 0.50</option>
+              </select>
+              <select id="host" aria-label="Filter by host star">
+                <option value="all">Any host star</option>
+                <option value="m">M dwarf (&lt;4000 K)</option>
+                <option value="k">K (4000–5300 K)</option>
+                <option value="g">G (5300–6000 K)</option>
+                <option value="f">F and hotter</option>
+              </select>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th class="num">#</th><th>TOI</th><th>Score</th>
+                    <th class="num">Depth S/N</th><th class="num">Period (d)</th>
+                  </tr>
+                </thead>
+                <tbody id="rows"></tbody>
+              </table>
+            </div>
+            <p class="meta" id="count"></p>
+          </div>
+          <div class="card" id="detail"></div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-method" role="tabpanel" aria-labelledby="tab-method" hidden>
+        <div class="cols">
+          <div>
+            <h2>From a candidate to a score</h2>
+            <div class="steps" style="margin-bottom: 18px">
+              <div class="step card"><b>1 · Fetch</b>Download every TESS sector for the star, stitch them, and remove slow brightness drifts without touching the transits.</div>
+              <div class="step card"><b>2 · Measure</b>Fold the light curve on the candidate's period and run the diagnostics below — 30 numbers per candidate.</div>
+              <div class="step card"><b>3 · Score</b>A gradient-boosted classifier trained on TOIs that already have a verdict, with probabilities calibrated so they can be read as odds.</div>
+              <div class="step card"><b>4 · Explain</b>Re-score each candidate with one feature swapped for a typical value; the change in log-odds is that feature's contribution.</div>
+            </div>
+            <h2>What the diagnostics look for</h2>
+            <div class="card">
+              <div class="diag"><b>Odd/even depth</b><p>Two stars eclipsing each other can be mistaken for one planet at half the true period. Then alternate dips have different depths.</p></div>
+              <div class="diag"><b>Secondary eclipse</b><p>A second, shallower dip half an orbit later means the companion is bright enough to be a star, not a planet.</p></div>
+              <div class="diag"><b>Transit shape</b><p>A planet crossing a star gives a flat-bottomed dip; a grazing pair of stars gives a V.</p></div>
+              <div class="diag"><b>Centroid shift</b><p>If the centre of light moves during the dip, the star that dimmed is a neighbour, not the target.</p></div>
+              <div class="diag"><b>Host-star fit</b><p>A planet's transit duration follows from the star's density and the orbital period. Durations that don't fit point to an eclipsing binary or a blend.</p></div>
+              <div class="diag"><b>Per-transit consistency</b><p>Real transits repeat. A signal carried by one or two events is usually instrumental.</p></div>
+            </div>
+          </div>
+          <div>
+            <h2>Two candidates, side by side</h2>
+            <figure class="card">
+              <div id="example-good"></div>
+            </figure>
+            <figure class="card">
+              <div id="example-bad"></div>
+            </figure>
+            <p class="meta">Same pipeline, same plot. Grey points are individual measurements; the violet line is the binned median; the dashed line marks the catalogued depth.</p>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" id="panel-results" role="tabpanel" aria-labelledby="tab-results" hidden>
+        <div class="cols">
+          <div>
+            <h2>How well it does</h2>
+            <div class="stats" id="result-stats"></div>
+            <p>
+              Cross-validation keeps every TOI of the same star in one fold, so sibling candidates
+              can't leak across the split. The harder test trains only on candidates alerted before
+              2021 and scores the later ones — the situation the model is actually in.
+            </p>
+            <figure class="card">
+              <h3>Do the probabilities mean anything?</h3>
+              <div id="calibration"></div>
+              <figcaption>Each point is a bin of candidates. On the dashed line, a score of 0.8 means 80% turned out to be planets.</figcaption>
+            </figure>
+            <figure class="card" style="margin-top: 14px">
+              <h3>Ranking within one kind of star</h3>
+              <div id="strata"></div>
+              <figcaption>If the model only sorted candidates by host-star type, these bars would collapse. They don't.</figcaption>
+            </figure>
+          </div>
+          <div>
+            <h2>An independent check</h2>
+            <p>
+              Ten scored candidates had already been called by the TESS team, using a label the
+              model never saw. Confirmed planets land near the top, eclipsing binaries near the
+              bottom.
+            </p>
+            <div class="card" id="known"></div>
+            <h2 style="margin-top: 20px">Read this before believing it</h2>
+            <div class="caveats">
+              <h3>Caveats</h3>
+              <ul>
+                <li><b>This is a ranking, not a discovery.</b> A high score means "worth observing next", not "this is a planet". Confirming one needs follow-up observations this project does not do.</li>
+                <li><b>The probabilities are optimistic in absolute terms.</b> They are calibrated against a training set that is 55% planets. Unresolved candidates are likely a good deal less planet-rich, so treat the ordering as the real output.</li>
+                <li><b>Expect ~0.90, not ~0.95, on new candidates.</b> Recent TOIs are fainter and noisier than the ones the model learned from.</li>
+                <li><b>Coverage is partial.</b> Only candidates with SPOC 2-minute light curves are scored — about 1,000 of some 5,300 unresolved TOIs.</li>
+                <li><b>The catalogue ephemeris is taken on trust.</b> Periods and epochs are not re-fitted, so a wrong period means the diagnostics measure the wrong thing.</li>
+                <li><b>Part of a high score is the host star.</b> Nearby small stars host more confirmed planets, and the model has learned that prior along with the transit evidence.</li>
+              </ul>
+            </div>
+            <p class="meta" style="margin-top: 14px">
+              Built with Python, lightkurve, scikit-learn.
+              <a id="repo" href="https://github.com/colinkehoe/automated-exoplanet-vetting">Source and method</a>.
+              Data: NASA TESS via MAST, TFOPWG dispositions via ExoFOP.
+            </p>
+          </div>
+        </div>
+      </section>
+    </div>
+    <div class="tip" id="tip" role="status" aria-live="polite"></div>
+
+    <script>
+      "use strict";
+      const SVG = "http://www.w3.org/2000/svg";
+      const tip = document.getElementById("tip");
+      const fmt = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v) ? "—" : (+v).toFixed(d));
+
+      function el(tag, attrs = {}, text) {
+        const node = document.createElementNS(SVG, tag);
+        for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v);
+        if (text !== undefined) node.textContent = text;
+        return node;
+      }
+      function showTip(event, html) {
+        tip.innerHTML = html;
+        tip.style.opacity = "1";
+        const pad = 14;
+        const box = tip.getBoundingClientRect();
+        let x = event.clientX + pad, y = event.clientY + pad;
+        if (x + box.width > innerWidth - 8) x = event.clientX - box.width - pad;
+        if (y + box.height > innerHeight - 8) y = event.clientY - box.height - pad;
+        tip.style.left = x + "px";
+        tip.style.top = y + "px";
+      }
+      const hideTip = () => (tip.style.opacity = "0");
+
+      /* ---------- charts ---------- */
+
+      /** Round gridline values inside a range, at a 1/2/5 x 10^n step. */
+      function niceTicks(lo, hi, count = 4) {
+        const raw = (hi - lo) / count;
+        const mag = 10 ** Math.floor(Math.log10(raw));
+        const step = [1, 2, 5, 10].find((m) => mag * m >= raw) * mag;
+        const ticks = [];
+        for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) ticks.push(Math.round(v));
+        return ticks;
+      }
+
+      /** Folded light curve: recessive points, binned median, catalogue depth. */
+      function foldedChart(curve, title) {
+        const W = 460, H = 240, m = { t: 14, r: 12, b: 34, l: 46 };
+        const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": title });
+        const xs = curve.binned.map((p) => p[0]);
+        const half = Math.max(...xs.map(Math.abs), 1);
+        // Percentiles, not extremes: one wild bin on a flaring host would
+        // otherwise squash the transit into a flat line.
+        const sorted = curve.binned.map((p) => p[1]).sort((a, b) => a - b);
+        const at = (q) => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+        const lo = at(0.03), hi = at(0.97);
+        const pad = (hi - lo) * 0.15 || 100;
+        const y0 = lo - pad, y1 = hi + pad;
+        const X = (v) => m.l + ((v + half) / (2 * half)) * (W - m.l - m.r);
+        const Y = (v) => m.t + (1 - (v - y0) / (y1 - y0)) * (H - m.t - m.b);
+
+        for (const g of niceTicks(y0, y1)) {
+          svg.append(el("line", { x1: m.l, x2: W - m.r, y1: Y(g), y2: Y(g), stroke: "#2a1b3d", "stroke-width": 1 }));
+          svg.append(el("text", { x: m.l - 6, y: Y(g) + 3, class: "tick", "text-anchor": "end" }, g.toLocaleString()));
+        }
+        svg.append(el("line", { x1: X(0), x2: X(0), y1: m.t, y2: H - m.b, stroke: "#2a1b3d", "stroke-dasharray": "2 3" }));
+        // points first, so the binned curve sits above them
+        for (const [x, v] of curve.points) {
+          if (v < y0 || v > y1) continue;
+          svg.append(el("circle", { cx: X(x), cy: Y(v), r: 1.4, fill: "#6e6288", "fill-opacity": 0.45 }));
+        }
+        // The catalogued depth can sit far off the measured one; drawing it
+        // anyway would flatten the curve, so it is labelled instead.
+        const depthInView = -curve.depth_ppm > y0 && -curve.depth_ppm < y1;
+        if (depthInView) {
+          svg.append(el("line", {
+            x1: m.l, x2: W - m.r, y1: Y(-curve.depth_ppm), y2: Y(-curve.depth_ppm),
+            stroke: "#c18600", "stroke-width": 1.5, "stroke-dasharray": "5 4",
+          }));
+          svg.append(el("text", { x: W - m.r, y: Y(-curve.depth_ppm) - 5, class: "tick", "text-anchor": "end", fill: "#c18600" }, "catalogued depth"));
+        } else {
+          svg.append(el("text", { x: W - m.r, y: m.t - 4, class: "tick", "text-anchor": "end", fill: "#c18600" },
+            `catalogued depth ${curve.depth_ppm.toLocaleString()} ppm — off scale`));
+        }
+        const d = curve.binned.map(([x, v], i) => `${i ? "L" : "M"}${X(x).toFixed(1)} ${Y(v).toFixed(1)}`).join(" ");
+        svg.append(el("path", { d, fill: "none", stroke: "#8b6bff", "stroke-width": 2, "stroke-linejoin": "round" }));
+        for (const [x, v] of curve.binned) {
+          const dot = el("circle", { cx: X(x), cy: Y(v), r: 4.5, fill: "#8b6bff", stroke: "#14061b", "stroke-width": 2 });
+          const hit = el("circle", { cx: X(x), cy: Y(v), r: 9, fill: "transparent" });
+          hit.addEventListener("pointerenter", (e) =>
+            showTip(e, `${(x / 60).toFixed(2)} h<br><b>${v > 0 ? "+" : ""}${v} ppm</b>`));
+          hit.addEventListener("pointerleave", hideTip);
+          svg.append(dot, hit);
+        }
+        svg.append(el("text", { x: (m.l + W - m.r) / 2, y: H - 6, class: "axis-label", "text-anchor": "middle" }, "hours from mid-transit"));
+        svg.append(el("text", { x: m.l - 6, y: m.t - 4, class: "axis-label", "text-anchor": "end" }, "ppm"));
+        return svg;
+      }
+
+      /** The whole orbit, where a second eclipse would show up. */
+      function orbitChart(curve, mark) {
+        const W = 460, H = 150, m = { t: 12, r: 12, b: 34, l: 46 };
+        const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Full orbit" });
+        const ppm = curve.orbit.map((p) => p[1]);
+        const sorted = [...ppm].sort((a, b) => a - b);
+        const lo = sorted[0], hi = sorted[sorted.length - 1];
+        const pad = (hi - lo) * 0.12 || 100;
+        const X = (v) => m.l + (v / 1000 + 0.5) * (W - m.l - m.r);
+        const Y = (v) => m.t + (1 - (v - (lo - pad)) / (hi + pad - (lo - pad))) * (H - m.t - m.b);
+        for (const g of niceTicks(lo - pad, hi + pad, 2)) {
+          svg.append(el("line", { x1: m.l, x2: W - m.r, y1: Y(g), y2: Y(g), stroke: "#2a1b3d" }));
+          svg.append(el("text", { x: m.l - 6, y: Y(g) + 3, class: "tick", "text-anchor": "end" }, g.toLocaleString()));
+        }
+        for (const [phase, label] of [[0, "transit"], [-500, ""], [500, "half an orbit later"]]) {
+          svg.append(el("line", { x1: X(phase), x2: X(phase), y1: m.t, y2: H - m.b, stroke: "#2a1b3d", "stroke-dasharray": "2 3" }));
+          if (label) svg.append(el("text", { x: X(phase), y: H - m.b + 14, class: "tick", "text-anchor": phase > 0 ? "end" : "middle" }, label));
+        }
+        const d = curve.orbit.map(([x, v], i) => `${i ? "L" : "M"}${X(x).toFixed(1)} ${Y(v).toFixed(1)}`).join(" ");
+        svg.append(el("path", { d, fill: "none", stroke: "#8b6bff", "stroke-width": 1.6 }));
+        for (const [x, v] of curve.orbit) {
+          const dot = el("circle", { cx: X(x), cy: Y(v), r: 2.6, fill: "#8b6bff" });
+          const hit = el("circle", { cx: X(x), cy: Y(v), r: 8, fill: "transparent" });
+          hit.addEventListener("pointerenter", (e) =>
+            showTip(e, `phase ${(x / 1000).toFixed(3)}<br><b>${v > 0 ? "+" : ""}${v} ppm</b>`));
+          hit.addEventListener("pointerleave", hideTip);
+          svg.append(dot, hit);
+        }
+        if (mark) {
+          const mx = X(mark.phase * 1000), my = Y(mark.ppm);
+          svg.append(el("circle", { cx: mx, cy: my, r: 8, fill: "none", stroke: "#c18600", "stroke-width": 2 }));
+          // Label above the mark, pulled inside the frame at the edges.
+          const anchor = mx > W - 90 ? "end" : mx < m.l + 90 ? "start" : "middle";
+          svg.append(el("line", { x1: mx, y1: my - 9, x2: mx, y2: my - 20, stroke: "#c18600", "stroke-width": 1 }));
+          svg.append(el("text", { x: mx, y: my - 25, class: "tick", fill: "#c18600", "text-anchor": anchor }, "second eclipse"));
+        }
+        return svg;
+      }
+
+      /** Diverging bars: which features pushed the score, and which way. */
+      function effectsChart(factors) {
+        const rowH = 26, W = 460, m = { t: 6, r: 12, b: 20, l: 150 };
+        const H = m.t + m.b + factors.length * rowH;
+        const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Feature contributions" });
+        const max = Math.max(...factors.map((f) => Math.abs(f.effect)), 0.2);
+        const mid = m.l + (W - m.l - m.r) / 2;
+        const scale = (W - m.l - m.r) / 2 / max;
+        svg.append(el("line", { x1: mid, x2: mid, y1: m.t, y2: H - m.b, stroke: "#2a1b3d" }));
+        factors.forEach((f, i) => {
+          const y = m.t + i * rowH + 5;
+          const w = Math.max(Math.abs(f.effect) * scale, 2);
+          const forPlanet = f.effect >= 0;
+          const bar = el("rect", {
+            x: forPlanet ? mid : mid - w, y, width: w, height: rowH - 12, rx: 4,
+            fill: forPlanet ? "#8b6bff" : "#c18600",
+          });
+          bar.addEventListener("pointerenter", (e) =>
+            showTip(e, `${f.feature} = ${fmt(f.value, 3)}<br><b>${f.effect > 0 ? "+" : ""}${f.effect.toFixed(2)}</b> log-odds ${forPlanet ? "for" : "against"}`));
+          bar.addEventListener("pointerleave", hideTip);
+          svg.append(bar);
+          svg.append(el("text", { x: m.l - 8, y: y + rowH / 2 - 3, class: "bar-label", "text-anchor": "end" }, f.feature));
+          svg.append(el("text", {
+            x: forPlanet ? mid + w + 5 : mid - w - 5, y: y + rowH / 2 - 3,
+            class: "bar-label", "text-anchor": forPlanet ? "start" : "end",
+          }, (f.effect > 0 ? "+" : "") + f.effect.toFixed(2)));
+        });
+        svg.append(el("text", { x: mid - 6, y: H - 6, class: "axis-label", "text-anchor": "end" }, "← against"));
+        svg.append(el("text", { x: mid + 6, y: H - 6, class: "axis-label" }, "for a planet →"));
+        return svg;
+      }
+
+      /** Calibration: predicted probability against observed planet fraction. */
+      function calibrationChart(rows) {
+        const W = 440, H = 300, m = { t: 12, r: 14, b: 42, l: 46 };
+        const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "Calibration" });
+        const X = (v) => m.l + v * (W - m.l - m.r);
+        const Y = (v) => m.t + (1 - v) * (H - m.t - m.b);
+        for (let g = 0; g <= 1.0001; g += 0.25) {
+          svg.append(el("line", { x1: m.l, x2: W - m.r, y1: Y(g), y2: Y(g), stroke: "#2a1b3d" }));
+          svg.append(el("text", { x: m.l - 6, y: Y(g) + 3, class: "tick", "text-anchor": "end" }, g.toFixed(2)));
+          svg.append(el("text", { x: X(g), y: H - m.b + 14, class: "tick", "text-anchor": "middle" }, g.toFixed(2)));
+        }
+        svg.append(el("line", { x1: X(0), y1: Y(0), x2: X(1), y2: Y(1), stroke: "#6e6288", "stroke-dasharray": "5 4" }));
+        const pts = rows.filter((r) => r.n > 0);
+        const d = pts.map((r, i) => `${i ? "L" : "M"}${X(r.predicted).toFixed(1)} ${Y(r.observed).toFixed(1)}`).join(" ");
+        svg.append(el("path", { d, fill: "none", stroke: "#8b6bff", "stroke-width": 2 }));
+        for (const r of pts) {
+          const dot = el("circle", { cx: X(r.predicted), cy: Y(r.observed), r: 5, fill: "#8b6bff", stroke: "#14061b", "stroke-width": 2 });
+          const hit = el("circle", { cx: X(r.predicted), cy: Y(r.observed), r: 11, fill: "transparent" });
+          hit.addEventListener("pointerenter", (e) =>
+            showTip(e, `predicted ${r.predicted.toFixed(2)}<br>observed <b>${r.observed.toFixed(2)}</b><br>${r.n} candidates`));
+          hit.addEventListener("pointerleave", hideTip);
+          svg.append(dot, hit);
+        }
+        svg.append(el("text", { x: (m.l + W - m.r) / 2, y: H - 8, class: "axis-label", "text-anchor": "middle" }, "predicted probability"));
+        const midY = (m.t + H - m.b) / 2;
+        svg.append(el("text", { x: 12, y: midY, class: "axis-label", transform: `rotate(-90 12 ${midY})`, "text-anchor": "middle" }, "observed planet fraction"));
+        return svg;
+      }
+
+      /** One bar per host-star bin, all on the same 0.5–1 scale. */
+      function strataChart(rows) {
+        const rowH = 26, W = 460, m = { t: 6, r: 44, b: 22, l: 168 };
+        const H = m.t + m.b + rows.length * rowH;
+        const svg = el("svg", { viewBox: `0 0 ${W} ${H}`, role: "img", "aria-label": "ROC-AUC by host star" });
+        const lo = 0.5;
+        const X = (v) => m.l + ((v - lo) / (1 - lo)) * (W - m.l - m.r);
+        for (const g of [0.5, 0.75, 1]) {
+          svg.append(el("line", { x1: X(g), x2: X(g), y1: m.t, y2: H - m.b, stroke: "#2a1b3d" }));
+          svg.append(el("text", { x: X(g), y: H - 6, class: "tick", "text-anchor": "middle" }, g.toFixed(2)));
+        }
+        rows.forEach((r, i) => {
+          const y = m.t + i * rowH + 5;
+          const w = Math.max(X(r.roc_auc) - m.l, 2);
+          const bar = el("rect", { x: m.l, y, width: w, height: rowH - 12, rx: 4, fill: "#8b6bff" });
+          bar.addEventListener("pointerenter", (e) =>
+            showTip(e, `${r.stratum}<br>ROC-AUC <b>${r.roc_auc.toFixed(3)}</b><br>${r.n} candidates, ${(r.planet_fraction * 100).toFixed(0)}% planets`));
+          bar.addEventListener("pointerleave", hideTip);
+          svg.append(bar);
+          svg.append(el("text", { x: m.l - 8, y: y + rowH / 2 - 3, class: "bar-label", "text-anchor": "end" }, r.label));
+          svg.append(el("text", { x: m.l + w + 6, y: y + rowH / 2 - 3, class: "bar-label" }, r.roc_auc.toFixed(3)));
+        });
+        return svg;
+      }
+
+      /* ---------- page ---------- */
+
+      let DATA = null, CURVES = null, selected = null;
+      const rowsBody = document.getElementById("rows");
+      const detail = document.getElementById("detail");
+
+      function hostBand(teff) {
+        if (teff === null || teff === undefined) return "unknown";
+        if (teff < 4000) return "m";
+        if (teff < 5300) return "k";
+        if (teff < 6000) return "g";
+        return "f";
+      }
+
+      function visible() {
+        const q = document.getElementById("q").value.trim().toLowerCase();
+        const band = document.getElementById("band").value;
+        const host = document.getElementById("host").value;
+        return DATA.candidates.filter((c) => {
+          if (q && !(`toi-${c.toi}`.includes(q) || c.toi.includes(q) || String(c.tic_id).includes(q))) return false;
+          if (band === "high" && c.probability < 0.9) return false;
+          if (band === "mid" && (c.probability < 0.5 || c.probability >= 0.9)) return false;
+          if (band === "low" && c.probability >= 0.5) return false;
+          if (host !== "all" && hostBand(c.features.star_teff) !== host) return false;
+          return true;
+        });
+      }
+
+      function renderRows() {
+        const list = visible();
+        rowsBody.textContent = "";
+        const frag = document.createDocumentFragment();
+        for (const c of list.slice(0, 250)) {
+          const tr = document.createElement("tr");
+          tr.tabIndex = 0;
+          tr.setAttribute("aria-selected", selected && selected.toi === c.toi ? "true" : "false");
+          tr.innerHTML =
+            `<td class="num muted">${c.rank}</td>` +
+            `<td>TOI-${c.toi}</td>` +
+            `<td><span class="score"><i style="--w:${(c.probability * 100).toFixed(0)}%"></i>${c.probability.toFixed(3)}</span></td>` +
+            `<td class="num">${fmt(c.features.depth_snr, 1)}</td>` +
+            `<td class="num">${CURVES[c.toi] ? CURVES[c.toi].period.toFixed(2) : "—"}</td>`;
+          const pick = () => select(c);
+          tr.addEventListener("click", pick);
+          tr.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); pick(); } });
+          frag.append(tr);
+        }
+        rowsBody.append(frag);
+        document.getElementById("count").textContent =
+          `${list.length} of ${DATA.candidates.length} candidates` + (list.length > 250 ? " — showing the first 250" : "");
+        if (!list.length) rowsBody.innerHTML = `<tr><td colspan="5" class="empty">Nothing matches those filters.</td></tr>`;
+      }
+
+      function select(c) {
+        selected = c;
+        for (const tr of rowsBody.children) {
+          tr.setAttribute("aria-selected", String(tr.children[1]?.textContent === `TOI-${c.toi}`));
+        }
+        const curve = CURVES[c.toi];
+        detail.textContent = "";
+        const head = document.createElement("div");
+        head.innerHTML =
+          `<div class="detail-title"><b>TOI-${c.toi}</b>` +
+          `<span class="pill">rank ${c.rank} of ${DATA.candidates.length}</span>` +
+          `<span class="pill" style="color:var(--violet)">score ${c.probability.toFixed(3)}</span></div>` +
+          `<p class="meta">TIC ${c.tic_id} · <a href="https://exofop.ipac.caltech.edu/tess/target.php?id=${c.tic_id}" target="_blank" rel="noopener">ExoFOP</a></p>` +
+          (c.note ? `<p class="note">Catalogue note: ${c.note}</p>` : "");
+        detail.append(head);
+
+        if (curve) {
+          const fig = document.createElement("figure");
+          const legend = document.createElement("div");
+          legend.className = "legend";
+          legend.innerHTML =
+            `<b><i class="swatch" style="background:#6e6288"></i>measurements</b>` +
+            `<b><i class="swatch" style="background:#8b6bff"></i>binned median</b>` +
+            `<b><i class="swatch" style="background:#c18600"></i>catalogued depth</b>`;
+          fig.append(legend, foldedChart(curve, `Folded light curve of TOI-${c.toi}`));
+          const cap = document.createElement("figcaption");
+          cap.textContent = `Folded on ${curve.period.toFixed(3)} d · transit lasts ${curve.duration_hours.toFixed(1)} h · depth ${curve.depth_ppm} ppm`;
+          fig.append(cap);
+          detail.append(fig);
+        } else {
+          const p = document.createElement("p");
+          p.className = "meta";
+          p.textContent = "Light curve not bundled for this candidate (only the top of the list ships with one).";
+          detail.append(p);
+        }
+
+        const h = document.createElement("h3");
+        h.textContent = "What moved the score";
+        detail.append(h, effectsChart(c.factors));
+
+        const grid = document.createElement("div");
+        grid.className = "grid2";
+        const labels = {
+          depth_snr: "depth S/N", n_transits: "transits", noise_ppm: "noise (ppm)",
+          odd_even_sigma: "odd/even σ", secondary_max_snr: "secondary S/N",
+          shape_inner_ratio: "shape ratio", centroid_shift_z: "centroid z",
+          log_duration_ratio: "duration fit", star_teff: "host Teff (K)",
+          star_radius: "radius (R☉)", star_distance: "distance (pc)", tess_mag: "TESS mag",
+        };
+        for (const [k, label] of Object.entries(labels)) {
+          if (!(k in c.features)) continue;
+          const v = c.features[k];
+          const dp = k === "star_teff" || k === "noise_ppm" || k === "n_transits" ? 0 : 2;
+          grid.insertAdjacentHTML("beforeend", `<div class="kv"><span>${label}</span><b>${fmt(v, dp)}</b></div>`);
+        }
+        detail.append(grid);
+      }
+
+      function renderStats() {
+        const cands = DATA.candidates;
+        const high = cands.filter((c) => c.probability >= 0.9).length;
+        const stats = [
+          [cands.length.toLocaleString(), "candidates scored"],
+          [high.toLocaleString(), "score 0.90 or above"],
+          [DATA.training.n.toLocaleString(), "TOIs used for training"],
+          [DATA.metrics.grouped_cv.mean.roc_auc.toFixed(3), "ROC-AUC, grouped CV"],
+        ];
+        document.getElementById("explorer-stats").innerHTML = stats
+          .map(([b, s]) => `<div class="stat"><b>${b}</b><span>${s}</span></div>`)
+          .join("");
+
+        const m = DATA.metrics;
+        document.getElementById("result-stats").innerHTML = [
+          [m.grouped_cv.mean.roc_auc.toFixed(3), "ROC-AUC, grouped CV"],
+          [m.grouped_cv.mean.average_precision.toFixed(3), "average precision"],
+          [m.temporal.roc_auc.toFixed(3), "ROC-AUC, trained on pre-2021"],
+          [m.grouped_cv.mean.brier.toFixed(3), "Brier score (lower is better)"],
+        ]
+          .map(([b, s]) => `<div class="stat"><b>${b}</b><span>${s}</span></div>`)
+          .join("");
+      }
+
+      const trim = (v) => String(+(+v).toFixed(1)).replace(/\.0$/, "");
+
+      function renderResults() {
+        document.getElementById("calibration").append(calibrationChart(DATA.metrics.calibration));
+        const pretty = (s) =>
+          s.replace("star_teff", "Teff").replace("star_distance", "distance").replace("star_radius", "radius")
+           .replace(/\(([\d.]+), ([\d.]+)\]/, (_, a, b) => (+a === 0 ? `under ${trim(b)}` : `${trim(a)}–${trim(b)}`))
+           .replace(/\(([\d.]+), inf\]/, (_, a) => `over ${trim(a)}`);
+        const rows = DATA.metrics.strata.map((r) => ({ ...r, label: pretty(r.stratum) }));
+        document.getElementById("strata").append(strataChart(rows));
+
+        const names = { CP: "confirmed planet", KP: "known planet", EB: "eclipsing binary", FP: "false positive" };
+        document.getElementById("known").innerHTML = DATA.known
+          .map((k) => {
+            const planet = k.disposition === "CP" || k.disposition === "KP";
+            return `<div class="kv"><span>TOI-${k.toi} · ${names[k.disposition]}</span>` +
+              `<b style="color:${planet ? "var(--violet)" : "var(--against)"}">rank ${k.rank} · ${k.probability.toFixed(3)}</b></div>`;
+          })
+          .join("");
+      }
+
+      /** A dip near half an orbit, but only if it stands out from the scatter. */
+      function secondEclipse(curve) {
+        const away = curve.orbit.filter(([x]) => Math.abs(x) > 350);
+        const rest = curve.orbit.filter(([x]) => Math.abs(x) > 120).map((p) => p[1]);
+        if (away.length < 6 || rest.length < 10) return null;
+        const median = rest.slice().sort((a, b) => a - b)[Math.floor(rest.length / 2)];
+        const deviations = rest.map((v) => Math.abs(v - median)).sort((a, b) => a - b);
+        const sigma = 1.4826 * deviations[Math.floor(deviations.length / 2)];
+        const deepest = away.slice().sort((a, b) => a[1] - b[1])[0];
+        if (!sigma || -(deepest[1] - median) / sigma < 4) return null;
+        return { phase: deepest[0] / 1000, ppm: deepest[1] };
+      }
+
+      function renderExamples() {
+        // The clearest illustrations, not the highest and lowest ranked: a
+        // faint noisy candidate makes a poor picture of what the model sees.
+        const withCurve = (pred) => DATA.candidates.filter((c) => pred(c) && CURVES[c.toi]);
+        const good = withCurve((c) => c.probability > 0.95 && c.features.depth_snr)
+          .sort((a, b) => b.features.depth_snr - a.features.depth_snr)[0];
+        // For the counter-example, the one whose second eclipse is most visible.
+        // The counter-example is the cleanest rejected curve, so the picture is
+        // readable; what makes it suspect is whatever the model actually used.
+        const bad = withCurve((c) => c.probability < 0.05 && c.features.depth_snr)
+          .sort((a, b) => b.features.depth_snr - a.features.depth_snr)[0];
+        const secondary = bad ? secondEclipse(CURVES[bad.toi]) : null;
+        for (const [id, c, headline, mark] of [
+          ["example-good", good, "Scored as a likely planet", null],
+          ["example-bad", bad, "Scored as a likely false positive", secondary],
+        ]) {
+          if (!c) continue;
+          const host = document.getElementById(id);
+          host.innerHTML = `<h3>${headline} — TOI-${c.toi} <span class="muted">· score ${c.probability.toFixed(3)}</span></h3>`;
+          host.append(foldedChart(CURVES[c.toi], `Folded light curve of TOI-${c.toi}`));
+          host.insertAdjacentHTML("beforeend", `<figcaption>Zoomed on the transit.</figcaption>`);
+          host.append(orbitChart(CURVES[c.toi], mark));
+          const why = c.factors.slice(0, 2).map((f) => `${f.feature} (${f.effect > 0 ? "+" : ""}${f.effect.toFixed(2)})`).join(", ");
+          const orbitNote = mark
+            ? " — a second dip half an orbit later, the mark of two stars eclipsing each other"
+            : " — nothing else happens in the orbit";
+          host.insertAdjacentHTML(
+            "beforeend",
+            `<figcaption>The whole orbit${orbitNote}. What the model weighed most: ${why}</figcaption>`
+          );
+        }
+      }
+
+      function setupTabs() {
+        const tabs = [...document.querySelectorAll(".tab")];
+        tabs.forEach((tab) =>
+          tab.addEventListener("click", () => {
+            tabs.forEach((t) => {
+              const on = t === tab;
+              t.setAttribute("aria-selected", String(on));
+              document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+            });
+          })
+        );
+      }
+
+      async function main() {
+        const [data, curves] = await Promise.all([
+          fetch("./data.json").then((r) => r.json()),
+          fetch("./curves.json").then((r) => r.json()),
+        ]);
+        DATA = data;
+        CURVES = curves;
+        document.getElementById("meta").textContent =
+          `${DATA.candidates.length.toLocaleString()} unresolved TESS candidates scored · trained on ${DATA.training.n.toLocaleString()} dispositioned TOIs · data ${DATA.generated}`;
+        setupTabs();
+        renderStats();
+        renderRows();
+        select(DATA.candidates[0]);
+        renderResults();
+        renderExamples();
+        for (const id of ["q", "band", "host"]) {
+          document.getElementById(id).addEventListener("input", renderRows);
+        }
+      }
+      main();
+    </script>
+  </body>
+</html>

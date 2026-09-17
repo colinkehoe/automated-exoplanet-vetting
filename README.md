@@ -87,6 +87,13 @@ against a baseline of typical training candidates, e.g.
 rather than transit physics: very nearby stars (~10 pc) mostly host real planets,
 so `star_distance` alone can add evidence.
 
+## Demo page
+
+`portfolio-demo/` is a standalone page — ranked candidates with their folded
+light curves, the diagnostics explained, and the evaluation evidence — built
+from `exovet export-demo`. See `portfolio-demo/README.md` for regenerating it
+and for embedding it in a site.
+
 ## Development
 
 ```sh

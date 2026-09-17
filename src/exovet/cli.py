@@ -12,6 +12,7 @@ import pandas as pd
 from exovet.data.lightcurves import DEFAULT_AUTHORS
 from exovet.data.toi import DEFAULT_CACHE, find_toi, load_toi_catalog
 from exovet.dataset import DEFAULT_CANDIDATES, DEFAULT_DATASET, TARGET_TIMEOUT, build_dataset
+from exovet.demo import DEFAULT_OUT as DEFAULT_DEMO_OUT
 from exovet.model import DEFAULT_MODEL, VettingModel, rank_candidates, train
 
 log = logging.getLogger(__name__)
@@ -81,6 +82,21 @@ def cmd_score(args: argparse.Namespace) -> None:
     print(f"\n{len(ranked)} candidates scored -> {args.out}")
 
 
+def cmd_export_demo(args: argparse.Namespace) -> None:
+    from exovet.demo import export
+
+    paths = export(
+        out=args.out,
+        dataset=pd.read_csv(args.dataset, dtype={"toi": str}),
+        ranked=pd.read_csv(args.ranked, dtype={"toi": str}),
+        catalog=load_toi_catalog(args.catalog),
+        model=VettingModel.load(args.model),
+        curves=args.curves,
+    )
+    for name, path in paths.items():
+        print(f"{name}: {path} ({path.stat().st_size / 1024:.0f} KB)")
+
+
 def cmd_evaluate(args: argparse.Namespace) -> None:
     from exovet.evaluate import evaluate
 
@@ -132,6 +148,14 @@ def main(argv: list[str] | None = None) -> None:
     sc.add_argument("--out", type=Path, default=Path("data/ranked.csv"))
     sc.add_argument("--top", type=int, default=20)
     sc.set_defaults(func=cmd_score)
+
+    ex = sub.add_parser("export-demo", help="write the demo page's JSON data")
+    ex.add_argument("--out", type=Path, default=DEFAULT_DEMO_OUT)
+    ex.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
+    ex.add_argument("--ranked", type=Path, default=Path("data/ranked.csv"))
+    ex.add_argument("--model", type=Path, default=DEFAULT_MODEL)
+    ex.add_argument("--curves", type=int, default=150, help="candidates to fold light curves for")
+    ex.set_defaults(func=cmd_export_demo)
 
     ev = sub.add_parser("evaluate", help="grouped CV, temporal holdout and calibration")
     ev.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
