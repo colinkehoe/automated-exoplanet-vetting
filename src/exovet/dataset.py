@@ -26,8 +26,8 @@ def _features_for(row: pd.Series, author: str) -> dict | None:
     if cand is None:
         return None
     try:
-        t, flux, _ = load_detrended(cand, author=author)
-        features = compute_features(t, flux, cand)
+        t, flux, centroids = load_detrended(cand, author=author)
+        features = compute_features(t, flux, cand, centroids)
     except Exception as exc:  # noqa: BLE001 - network errors, missing data, corrupt files
         log.warning("Skipping %s: %s", cand.name, exc)
         return None

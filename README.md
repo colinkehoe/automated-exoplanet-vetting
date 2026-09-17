@@ -16,6 +16,7 @@ disposition as labels.
 | Per-transit consistency | systematics dominated by one or two events |
 | Host star (radius, density, Teff, distance) and implied planet radius | giant or distant hosts, companions too large to be planets |
 | Observed vs. expected duration for the host's density | eclipsing binaries and signals blended from another star |
+| Centroid shift in transit (SPOC flux-weighted centroids) | dips that come from a nearby star |
 
 Stellar values come from the TOI catalog. Follow-up tends to fill them in for confirmed
 planets, so the model median-imputes them rather than learning from their absence.
@@ -23,8 +24,13 @@ planets, so the model median-imputes them rather than learning from their absenc
 ## Performance
 
 Cross-validated on 2,518 dispositioned TOIs with SPOC 2-minute light curves
-(1,388 planets, 1,130 false positives): ROC-AUC 0.947, average precision 0.954.
-Without the host star features: ROC-AUC 0.890.
+(1,388 planets, 1,130 false positives), averaged over 10 random 5-fold splits:
+
+| Features | ROC-AUC | Average precision |
+| --- | --- | --- |
+| Light curve and catalog only | 0.890 | 0.902 |
+| + host star | 0.946 | 0.953 |
+| + centroid shift | 0.951 | 0.957 |
 
 ## Usage
 

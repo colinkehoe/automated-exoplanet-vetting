@@ -21,8 +21,8 @@ def cmd_vet(args: argparse.Namespace) -> None:
     from exovet.features import compute_features
 
     cand = find_toi(load_toi_catalog(args.catalog), args.toi)
-    time, flux, _ = load_detrended(cand, author=args.author)
-    features = compute_features(time, flux, cand)
+    time, flux, centroids = load_detrended(cand, author=args.author)
+    features = compute_features(time, flux, cand, centroids)
 
     result = {"candidate": cand.name, "features": features}
     if args.model.exists():

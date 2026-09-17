@@ -5,6 +5,7 @@ from __future__ import annotations
 import numpy as np
 
 from exovet.candidate import Candidate
+from exovet.diagnostics.centroid import CentroidSeries, centroid_features
 from exovet.diagnostics.odd_even import odd_even_features
 from exovet.diagnostics.secondary import secondary_features
 from exovet.diagnostics.shape import consistency_features, shape_features
@@ -27,8 +28,17 @@ def catalog_features(cand: Candidate) -> dict[str, float]:
     return {k: float(v) for k, v in features.items()}
 
 
-def compute_features(time: np.ndarray, flux: np.ndarray, cand: Candidate) -> dict[str, float]:
-    """Compute all features for a candidate from a detrended light curve."""
+def compute_features(
+    time: np.ndarray,
+    flux: np.ndarray,
+    cand: Candidate,
+    centroids: list[CentroidSeries] | None = None,
+) -> dict[str, float]:
+    """Compute all features for a candidate from a detrended light curve.
+
+    ``centroids`` holds each sector's centroid series; without it the centroid
+    features are NaN.
+    """
     time = np.asarray(time, dtype=float)
     flux = np.asarray(flux, dtype=float)
     features = catalog_features(cand)
@@ -36,4 +46,5 @@ def compute_features(time: np.ndarray, flux: np.ndarray, cand: Candidate) -> dic
     features.update(consistency_features(time, flux, cand))
     features.update(odd_even_features(time, flux, cand))
     features.update(secondary_features(time, flux, cand))
+    features.update(centroid_features(centroids or [], cand))
     return {k: float(v) for k, v in features.items()}

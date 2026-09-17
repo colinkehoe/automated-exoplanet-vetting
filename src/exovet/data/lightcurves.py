@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from exovet.candidate import Candidate
+from exovet.diagnostics.centroid import CentroidSeries
 from exovet.diagnostics.folding import in_transit_mask
 
 DEFAULT_DOWNLOAD_DIR = Path("cache/lightcurves")
@@ -35,13 +36,13 @@ def enforce_http_timeout(timeout: tuple[float, float] = HTTP_TIMEOUT) -> None:
     HTTPAdapter.send = send
 
 
-def fetch_lightcurve(
+def fetch_sectors(
     tic_id: int,
     author: str = "SPOC",
     download_dir: Path = DEFAULT_DOWNLOAD_DIR,
     max_sectors: int | None = MAX_SECTORS,
 ):
-    """Download and stitch up to ``max_sectors`` sectors for a target.
+    """Download up to ``max_sectors`` sectors for a target, one light curve each.
 
     SPOC is restricted to 2-minute cadence so sectors stitch cleanly; other
     pipelines (e.g. QLP) take whatever cadence is available. The sector cap
@@ -66,8 +67,17 @@ def fetch_lightcurve(
         for path in _cached_paths(search, download_dir):
             path.unlink(missing_ok=True)
         collection = search.download_all(download_dir=str(download_dir))
-    # lightkurve's default quality bitmask has already dropped flagged cadences.
-    return collection.stitch().remove_nans()
+    return collection
+
+
+def centroid_series(lc) -> CentroidSeries:
+    """Flux-weighted centroids of one sector, keeping only unflagged cadences."""
+    good = np.asarray(lc.quality) == 0
+    return CentroidSeries(
+        np.asarray(lc.time.value, dtype=float)[good],
+        np.asarray(lc.centroid_col.value, dtype=float)[good],
+        np.asarray(lc.centroid_row.value, dtype=float)[good],
+    )
 
 
 def _cached_paths(search, download_dir: Path) -> list[Path]:
@@ -95,15 +105,19 @@ def detrend(lc, cand: Candidate, window_durations: float = 3.0):
     return lc.flatten(window_length=window, mask=mask)
 
 
-def to_arrays(lc) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Extract plain arrays of time, normalized flux and flux error."""
+def to_arrays(lc) -> tuple[np.ndarray, np.ndarray]:
+    """Extract plain arrays of time and normalized flux."""
     time = np.asarray(lc.time.value, dtype=float)
     flux = np.asarray(lc.flux.value, dtype=float)
-    flux_err = np.asarray(lc.flux_err.value, dtype=float)
     good = np.isfinite(time) & np.isfinite(flux)
-    return time[good], flux[good], flux_err[good]
+    return time[good], flux[good]
 
 
-def load_detrended(cand: Candidate, author: str = "SPOC"):
-    lc = fetch_lightcurve(cand.tic_id, author=author)
-    return to_arrays(detrend(lc, cand))
+def load_detrended(
+    cand: Candidate, author: str = "SPOC"
+) -> tuple[np.ndarray, np.ndarray, list[CentroidSeries]]:
+    """Detrended time and flux, plus each sector's centroids."""
+    sectors = fetch_sectors(cand.tic_id, author=author)
+    lc = sectors.stitch().remove_nans()
+    time, flux = to_arrays(detrend(lc, cand))
+    return time, flux, [centroid_series(s) for s in sectors]
