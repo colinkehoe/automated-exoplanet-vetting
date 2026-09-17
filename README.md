@@ -23,14 +23,22 @@ planets, so the model median-imputes them rather than learning from their absenc
 
 ## Performance
 
-Cross-validated on 2,518 dispositioned TOIs with SPOC 2-minute light curves
-(1,388 planets, 1,130 false positives), averaged over 10 random 5-fold splits:
+2,518 dispositioned TOIs with SPOC 2-minute light curves (1,388 planets, 1,130 false
+positives). Cross-validation keeps all TOIs of a star in the same fold.
 
-| Features | ROC-AUC | Average precision |
-| --- | --- | --- |
-| Light curve and catalog only | 0.890 | 0.902 |
-| + host star | 0.946 | 0.953 |
-| + centroid shift | 0.951 | 0.957 |
+| Evaluation | ROC-AUC | Average precision | Brier |
+| --- | --- | --- | --- |
+| Grouped 5-fold CV (3 seeds) | 0.952 | 0.958 | 0.085 |
+| Temporal: train on TOIs alerted before 2021, test on later ones | 0.899 | 0.922 | 0.126 |
+
+Feature groups, by grouped CV ROC-AUC: light curve and catalog only 0.890, + host star
+0.946, + centroid shift 0.951. Sigmoid calibration (on star-grouped folds) keeps the
+predicted probabilities close to the observed planet fraction.
+
+Scores on newer candidates are lower than the cross-validated figure. Later TOIs are
+fainter and noisier with fewer transits, and a model trained on earlier TOIs has seen
+fewer such targets. Recently resolved TOIs are also mostly planets, so the planet
+fraction among unresolved candidates is unknown; read probabilities as a ranking first.
 
 ## Usage
 
@@ -38,6 +46,7 @@ Cross-validated on 2,518 dispositioned TOIs with SPOC 2-minute light curves
 uv sync
 uv run exovet -v build-dataset --limit 200   # download light curves, compute features
 uv run exovet train                           # cross-validated metrics, then saves the model
+uv run exovet evaluate                        # grouped CV, temporal holdout, calibration
 uv run exovet vet 700.01                      # features plus planet probability
 ```
 

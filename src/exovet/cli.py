@@ -53,6 +53,17 @@ def cmd_train(args: argparse.Namespace) -> None:
     print(f"Saved model to {args.out}")
 
 
+def cmd_evaluate(args: argparse.Namespace) -> None:
+    from exovet.evaluate import evaluate
+
+    dataset = pd.read_csv(args.dataset, dtype={"toi": str})
+    report = evaluate(dataset, load_toi_catalog(args.catalog), cutoff=args.cutoff, seeds=args.seeds)
+    calibration = report.pop("calibration")
+    print(json.dumps(report, indent=2))
+    print("\nCalibration (grouped CV, averaged over seeds):")
+    print(calibration.to_string())
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog="exovet", description=__doc__)
     parser.add_argument("-v", "--verbose", action="store_true")
@@ -81,6 +92,12 @@ def main(argv: list[str] | None = None) -> None:
     tr.add_argument("--out", type=Path, default=DEFAULT_MODEL)
     tr.add_argument("--folds", type=int, default=5)
     tr.set_defaults(func=cmd_train)
+
+    ev = sub.add_parser("evaluate", help="grouped CV, temporal holdout and calibration")
+    ev.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
+    ev.add_argument("--cutoff", default="2021-01-01", help="temporal split: alert date")
+    ev.add_argument("--seeds", type=int, default=3)
+    ev.set_defaults(func=cmd_evaluate)
 
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
