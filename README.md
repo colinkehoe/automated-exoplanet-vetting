@@ -1,5 +1,7 @@
 # exovet
 
+[![CI](https://github.com/colinkehoe/automated-exoplanet-vetting/actions/workflows/ci.yml/badge.svg)](https://github.com/colinkehoe/automated-exoplanet-vetting/actions/workflows/ci.yml)
+
 Automated vetting of TESS transiting exoplanet candidates (TOIs). exovet computes
 diagnostic features from each candidate's light curve and trains a classifier to
 separate planets from false positives, using the TOIs that already have a TFOPWG
@@ -17,6 +19,7 @@ disposition as labels.
 | Host star (radius, density, Teff, distance) and implied planet radius | giant or distant hosts, companions too large to be planets |
 | Observed vs. expected duration for the host's density | eclipsing binaries and signals blended from another star |
 | Centroid shift in transit (SPOC flux-weighted centroids) | dips that come from a nearby star |
+| Ephemeris re-fit, and the same fit at half and double the period | wrong or aliased catalogue periods, eclipsing binaries alerted at half their period |
 
 Stellar values come from the TOI catalog. Follow-up tends to fill them in for confirmed
 planets, so the model median-imputes them rather than learning from their absence.
@@ -60,6 +63,7 @@ uv run exovet -v build-dataset --limit 200   # download light curves, compute fe
 uv run exovet train                           # cross-validated metrics, then saves the model
 uv run exovet evaluate                        # grouped CV, temporal holdout, calibration
 uv run exovet vet 700.01                      # features plus planet probability
+uv run exovet recompute --author SPOC        # rebuild features from cached light curves
 
 uv run exovet -v build-dataset --unlabeled --detection SPOC \
     --workers 6 --out data/candidates.csv    # features for undispositioned TOIs

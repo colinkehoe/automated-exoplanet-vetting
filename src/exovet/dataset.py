@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from exovet.data.lightcurves import DEFAULT_AUTHORS, load_detrended
+from exovet.data.lightcurves import DEFAULT_AUTHORS, load_cached_detrended, load_detrended
 from exovet.data.toi import row_to_candidate
 from exovet.features import catalog_features, compute_features
 
@@ -37,6 +37,66 @@ def _features_for(row: pd.Series, authors: Sequence[str]) -> dict | None:
     if pd.notna(label):
         record["label"] = int(label)
     return {**record, **features}
+
+
+def _cached_features_for(row: pd.Series, authors: Sequence[str]) -> dict | None:
+    """Like ``_features_for`` but reading the download cache, so no network."""
+    cand = row_to_candidate(row)
+    if cand is None:
+        return None
+    try:
+        lc = load_cached_detrended(cand, author=authors[0])
+        features = compute_features(lc.time, lc.flux, cand, lc.centroids)
+    except Exception as exc:  # noqa: BLE001 - missing or unreadable cached files
+        log.warning("Skipping %s: %s", cand.name, exc)
+        return None
+    label = row.get("label")
+    record = {"toi": cand.toi, "tic_id": cand.tic_id, "author": lc.author}
+    if pd.notna(label):
+        record["label"] = int(label)
+    return {**record, **features}
+
+
+def recompute_features(
+    dataset: pd.DataFrame,
+    catalog: pd.DataFrame,
+    author: str = "SPOC",
+    workers: int = 4,
+    timeout: float = TARGET_TIMEOUT,
+) -> pd.DataFrame:
+    """Recompute every row's features from cached light curves.
+
+    New light-curve features reach an existing dataset without downloading it
+    again. Rows whose cache is missing keep their old values.
+    """
+    by_toi = catalog.set_index("TOI")
+    rows = []
+    for toi in dataset["toi"]:
+        if toi not in by_toi.index:
+            continue
+        row = by_toi.loc[toi].copy()
+        row["TOI"] = toi
+        rows.append(row)
+
+    fresh = {}
+    records = _iter_records(rows, (author,), workers, timeout, target=_cached_features_for)
+    for i, record in enumerate(records, 1):
+        if record is None:
+            continue
+        fresh[record["toi"]] = record
+        log.info("[%d/%d] TOI-%s", i, len(rows), record["toi"])
+    if not fresh:
+        return dataset
+
+    updated = pd.DataFrame.from_dict(fresh, orient="index")
+    out = dataset.set_index("toi")
+    for column in updated.columns:
+        if column not in out.columns:
+            out[column] = float("nan")
+    out.loc[updated.index, updated.columns] = updated
+    if "label" in out and out["label"].notna().all():
+        out["label"] = out["label"].astype(int)
+    return out.drop(columns=["toi"], errors="ignore").reset_index()
 
 
 def _run_target(conn, target, row, authors) -> None:

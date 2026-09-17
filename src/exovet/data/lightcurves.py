@@ -8,7 +8,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import numpy as np
-from astropy.io import fits
 
 from exovet.candidate import Candidate
 from exovet.diagnostics.centroid import CentroidSeries
@@ -16,7 +15,6 @@ from exovet.diagnostics.folding import in_transit_mask
 
 DEFAULT_DOWNLOAD_DIR = Path("cache/lightcurves")
 MAX_SECTORS = 10
-MIN_CADENCES = 100  # a sector with fewer usable cadences is not worth stitching
 # Pipelines to try in order. SPOC has 2-minute light curves with centroids; QLP
 # covers many fainter targets from the full-frame images, without centroids.
 DEFAULT_AUTHORS = ("SPOC",)
@@ -132,31 +130,36 @@ def _cached_paths(search, download_dir: Path) -> list[Path]:
     ]
 
 
-def load_cached(cand: Candidate, download_dir: Path = DEFAULT_DOWNLOAD_DIR):
-    """Stitch whatever sectors are already in the download cache, without MAST.
+# Where each pipeline's products land under the download cache.
+CACHE_PATTERNS = {
+    "SPOC": "TESS/*-{tic:016d}-*/*_lc.fits",
+    "QLP": "HLSP/hlsp_qlp_tess_ffi_s*-{tic:016d}_tess_v01_llc/*.fits",
+}
 
-    Lets plots and exports be rebuilt offline from targets the dataset build
-    already fetched.
+
+def cached_sectors(
+    cand: Candidate, author: str = "SPOC", download_dir: Path = DEFAULT_DOWNLOAD_DIR
+) -> list:
+    """The sectors already in the download cache, read as lightkurve objects.
+
+    Read through lightkurve, like the download path, so features recomputed
+    offline match the ones the pipeline produced.
     """
     import lightkurve as lk
 
-    pattern = f"*-{cand.tic_id:016d}-*/*_lc.fits"
-    curves = []
-    for path in sorted(Path(download_dir, "mastDownload", "TESS").glob(pattern)):
-        with fits.open(path) as hdus:
-            data = hdus[1].data
-            good = (data["QUALITY"] == 0) & np.isfinite(data["PDCSAP_FLUX"])
-            if good.sum() < MIN_CADENCES:
-                continue
-            flux = np.asarray(data["PDCSAP_FLUX"][good], dtype=float)
-            curves.append(
-                lk.LightCurve(
-                    time=np.asarray(data["TIME"][good], dtype=float), flux=flux / np.nanmedian(flux)
-                )
-            )
-    if not curves:
-        raise LookupError(f"No cached light curves for TIC {cand.tic_id}")
-    return lk.LightCurveCollection(curves).stitch().remove_nans()
+    pattern = CACHE_PATTERNS[author].format(tic=cand.tic_id)
+    paths = sorted(Path(download_dir, "mastDownload").glob(pattern))
+    if not paths:
+        raise LookupError(f"No cached {author} light curves for TIC {cand.tic_id}")
+    return [lk.read(path) for path in paths]
+
+
+def load_cached(cand: Candidate, author: str = "SPOC", download_dir: Path = DEFAULT_DOWNLOAD_DIR):
+    """Stitch the cached sectors of a target, without asking MAST."""
+    import lightkurve as lk
+
+    sectors = cached_sectors(cand, author=author, download_dir=download_dir)
+    return lk.LightCurveCollection(sectors).stitch().remove_nans()
 
 
 def detrend(lc, cand: Candidate, window_durations: float = 3.0):
@@ -177,11 +180,22 @@ def to_arrays(lc) -> tuple[np.ndarray, np.ndarray]:
     return time[good], flux[good]
 
 
+def load_cached_detrended(cand: Candidate, author: str = "SPOC") -> LightCurveData:
+    """Like ``load_detrended``, but from the download cache only."""
+    sectors = cached_sectors(cand, author=author)
+    return _detrended(sectors, cand, author)
+
+
+def _detrended(sectors, cand: Candidate, author: str) -> LightCurveData:
+    import lightkurve as lk
+
+    collection = sectors if hasattr(sectors, "stitch") else lk.LightCurveCollection(sectors)
+    time, flux = to_arrays(detrend(collection.stitch().remove_nans(), cand))
+    centroids = (centroid_series(sector) for sector in sectors)
+    return LightCurveData(time, flux, [c for c in centroids if c is not None], author)
+
+
 def load_detrended(cand: Candidate, authors: Sequence[str] = DEFAULT_AUTHORS) -> LightCurveData:
     """Detrended light curve of a candidate's target, centroids where available."""
     sectors = fetch_sectors(cand.tic_id, authors=authors)
-    lc = sectors.stitch().remove_nans()
-    time, flux = to_arrays(detrend(lc, cand))
-    centroids = (centroid_series(s) for s in sectors)
-    author = str(sectors[0].meta.get("AUTHOR", authors[0]))
-    return LightCurveData(time, flux, [c for c in centroids if c is not None], author)
+    return _detrended(sectors, cand, str(sectors[0].meta.get("AUTHOR", authors[0])))

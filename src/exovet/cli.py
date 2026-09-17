@@ -67,6 +67,17 @@ def cmd_train(args: argparse.Namespace) -> None:
     print(f"Saved model to {args.out}")
 
 
+def cmd_recompute(args: argparse.Namespace) -> None:
+    from exovet.dataset import recompute_features
+
+    dataset = pd.read_csv(args.dataset, dtype={"toi": str})
+    updated = recompute_features(
+        dataset, load_toi_catalog(args.catalog), author=args.author, workers=args.workers
+    )
+    updated.to_csv(args.dataset, index=False)
+    print(f"{len(updated)} rows, {len(updated.columns)} columns -> {args.dataset}")
+
+
 def cmd_score(args: argparse.Namespace) -> None:
     candidates = pd.read_csv(args.candidates, dtype={"toi": str})
     from exovet.explain import describe, top_factors
@@ -141,6 +152,12 @@ def main(argv: list[str] | None = None) -> None:
     tr.add_argument("--out", type=Path, default=DEFAULT_MODEL)
     tr.add_argument("--folds", type=int, default=5)
     tr.set_defaults(func=cmd_train)
+
+    rc = sub.add_parser("recompute", help="rebuild features from cached light curves")
+    rc.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
+    rc.add_argument("--author", default="SPOC", help="which pipeline's cached files to read")
+    rc.add_argument("--workers", type=int, default=4)
+    rc.set_defaults(func=cmd_recompute)
 
     sc = sub.add_parser("score", help="rank candidates with a trained model")
     sc.add_argument("--candidates", type=Path, default=DEFAULT_CANDIDATES)

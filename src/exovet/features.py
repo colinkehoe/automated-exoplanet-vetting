@@ -6,6 +6,7 @@ import numpy as np
 
 from exovet.candidate import Candidate
 from exovet.diagnostics.centroid import CentroidSeries, centroid_features
+from exovet.diagnostics.ephemeris import ephemeris_features
 from exovet.diagnostics.odd_even import odd_even_features
 from exovet.diagnostics.secondary import secondary_features
 from exovet.diagnostics.shape import consistency_features, shape_features
@@ -47,4 +48,5 @@ def compute_features(
     features.update(odd_even_features(time, flux, cand))
     features.update(secondary_features(time, flux, cand))
     features.update(centroid_features(centroids or [], cand))
+    features.update(ephemeris_features(time, flux, cand))
     return {k: float(v) for k, v in features.items()}
