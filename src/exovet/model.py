@@ -21,12 +21,15 @@ from exovet.diagnostics.stellar import BACKFILLED_FEATURES
 
 DEFAULT_MODEL = Path("models/exovet.joblib")
 NON_FEATURE_COLUMNS = {"toi", "tic_id", "label"}
+BACKGROUND_SIZE = 50
 
 
 @dataclass
 class VettingModel:
     classifier: CalibratedClassifierCV
     feature_names: list[str]
+    background: pd.DataFrame | None = None
+    """Sample of training candidates, the baseline explanations compare against."""
 
     def predict_proba(self, features: pd.DataFrame | dict[str, float]) -> np.ndarray:
         """Probability that each candidate is a planet."""
@@ -78,7 +81,10 @@ def fit(dataset: pd.DataFrame, seed: int = 0) -> VettingModel:
         classifier.fit(
             dataset[feature_names], dataset["label"].astype(int), groups=dataset["tic_id"]
         )
-    return VettingModel(classifier, feature_names)
+    background = dataset[feature_names].sample(
+        min(BACKGROUND_SIZE, len(dataset)), random_state=seed
+    )
+    return VettingModel(classifier, feature_names, background.reset_index(drop=True))
 
 
 def cross_validated_proba(dataset: pd.DataFrame, folds: int = 5, seed: int = 0) -> np.ndarray:

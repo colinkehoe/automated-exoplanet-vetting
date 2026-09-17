@@ -26,8 +26,11 @@ def cmd_vet(args: argparse.Namespace) -> None:
 
     result = {"candidate": cand.name, "features": features}
     if args.model.exists():
+        from exovet.explain import top_factors
+
         model = VettingModel.load(args.model)
         result["planet_probability"] = float(model.predict_proba(features)[0])
+        result["top_factors"] = top_factors(model, pd.Series(features))
     else:
         log.warning("No model at %s; reporting features only", args.model)
     print(json.dumps(result, indent=2))
@@ -57,9 +60,16 @@ def cmd_train(args: argparse.Namespace) -> None:
 
 def cmd_score(args: argparse.Namespace) -> None:
     candidates = pd.read_csv(args.candidates, dtype={"toi": str})
-    ranked = rank_candidates(VettingModel.load(args.model), candidates)
+    from exovet.explain import describe, top_factors
+
+    model = VettingModel.load(args.model)
+    ranked = rank_candidates(model, candidates)
+    ranked.insert(
+        3, "top_factors", [describe(top_factors(model, row)) for _, row in ranked.iterrows()]
+    )
     ranked.to_csv(args.out, index=False)
-    print(ranked.head(args.top)[["toi", "tic_id", "planet_probability"]].to_string(index=False))
+    columns = ["toi", "tic_id", "planet_probability", "top_factors"]
+    print(ranked.head(args.top)[columns].to_string(index=False))
     print(f"\n{len(ranked)} candidates scored -> {args.out}")
 
 

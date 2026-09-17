@@ -61,6 +61,14 @@ existing rows (`--limit 0` does only that). Targets that stall are killed after
 On a laptop, keep the machine awake (e.g. `caffeinate -i`) and plugged in; sleep stalls
 downloads.
 
+## Reading a score
+
+`vet` and `score` report the features that moved the evidence most, in log-odds
+against a baseline of typical training candidates, e.g.
+`secondary_snr=8.1 (-3.2)`. Some of the strongest factors are population priors
+rather than transit physics: very nearby stars (~10 pc) mostly host real planets,
+so `star_distance` alone can add evidence.
+
 ## Development
 
 ```sh
