@@ -1,3 +1,4 @@
+import math
 import os
 import socket
 import time
@@ -75,3 +76,38 @@ def test_build_dataset_survives_every_target_failing(tmp_path, monkeypatch):
     out = tmp_path / "features.csv"
     assert dataset.build_dataset(catalog, out=out).empty
     assert not out.exists()
+
+
+def test_unlabeled_resume_keeps_schema(tmp_path, monkeypatch):
+    """A resumed unlabeled run must not grow a label column or reject new rows."""
+    import pandas as pd
+
+    from exovet import dataset
+
+    catalog = pd.DataFrame(
+        {
+            "TOI": ["1.01", "2.01"],
+            "TIC ID": [11, 22],
+            "Period (days)": [3.0, 4.0],
+            "Epoch (BJD)": [2459000.0, 2459001.0],
+            "Duration (hours)": [2.0, 3.0],
+            "Depth (ppm)": [1000.0, 2000.0],
+            "Detection": ["SPOC", "SPOC"],
+            "label": [float("nan"), float("nan")],
+        }
+    )
+    out = tmp_path / "candidates.csv"
+    pd.DataFrame([{"toi": "1.01", "tic_id": 11, "author": "SPOC", "depth_snr": 9.0}]).to_csv(
+        out, index=False
+    )
+    monkeypatch.setattr(
+        dataset,
+        "_iter_records",
+        lambda rows, *a, **k: iter(
+            [{"toi": "2.01", "tic_id": 22, "author": "SPOC", "depth_snr": 5.0}]
+        ),
+    )
+    result = dataset.build_dataset(catalog, out=out, labeled=False)
+    assert "label" not in result.columns
+    assert sorted(result.toi) == ["1.01", "2.01"]
+    assert result.set_index("toi").loc["1.01", "log_period"] == pytest.approx(math.log10(3.0))

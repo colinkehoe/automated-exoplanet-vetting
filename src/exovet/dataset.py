@@ -114,18 +114,16 @@ def refresh_catalog_features(dataset: pd.DataFrame, catalog: pd.DataFrame) -> pd
         return dataset
 
     fresh = pd.DataFrame.from_dict(updates, orient="index")
-    if "label" not in fresh:
-        fresh["label"] = float("nan")
     out = dataset.set_index("toi")
     for column in fresh.columns:
         if column not in out.columns:
             out[column] = float("nan")
     out.loc[fresh.index, fresh.columns] = fresh  # unlike update(), also copies NaN
-    if out["label"].notna().all():
+    if "label" in out and out["label"].notna().all():
         out["label"] = out["label"].astype(int)
-    # Catalog features first, matching compute_features' order.
-    base = ["tic_id", "label"]
-    catalog_cols = [c for c in fresh.columns if c != "label"]
+    # Identifiers first, then catalog features, matching compute_features' order.
+    base = [c for c in ("tic_id", "author", "label") if c in out.columns]
+    catalog_cols = [c for c in fresh.columns if c not in base]
     rest = [c for c in out.columns if c not in base and c not in catalog_cols]
     return out[base + catalog_cols + rest].reset_index()
 
@@ -181,7 +179,8 @@ def build_dataset(
         row = pd.DataFrame([record])
         if columns is None:
             columns = list(row.columns)
-        row[columns].to_csv(out, mode="a", header=not out.exists(), index=False)
+        # reindex, not selection: a resumed file may carry columns this row lacks.
+        row.reindex(columns=columns).to_csv(out, mode="a", header=not out.exists(), index=False)
         log.info("[%d/%d] TOI-%s", i, len(targets), record["toi"])
 
     if not out.exists():  # every target failed, e.g. the archive is down
