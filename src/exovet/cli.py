@@ -10,7 +10,7 @@ from pathlib import Path
 import pandas as pd
 
 from exovet.data.toi import DEFAULT_CACHE, find_toi, load_toi_catalog
-from exovet.dataset import DEFAULT_DATASET, build_dataset
+from exovet.dataset import DEFAULT_DATASET, TARGET_TIMEOUT, build_dataset
 from exovet.model import DEFAULT_MODEL, VettingModel, train
 
 log = logging.getLogger(__name__)
@@ -36,7 +36,12 @@ def cmd_vet(args: argparse.Namespace) -> None:
 def cmd_build_dataset(args: argparse.Namespace) -> None:
     catalog = load_toi_catalog(args.catalog, refresh=args.refresh)
     df = build_dataset(
-        catalog, out=args.out, limit=args.limit, author=args.author, workers=args.workers
+        catalog,
+        out=args.out,
+        limit=args.limit,
+        author=args.author,
+        workers=args.workers,
+        timeout=args.timeout,
     )
     print(f"{len(df)} rows in {args.out}")
 
@@ -65,6 +70,9 @@ def main(argv: list[str] | None = None) -> None:
     build.add_argument("--limit", type=int)
     build.add_argument("--author", default="SPOC")
     build.add_argument("--workers", type=int, default=4, help="parallel downloads")
+    build.add_argument(
+        "--timeout", type=float, default=TARGET_TIMEOUT, help="seconds before a target is killed"
+    )
     build.add_argument("--refresh", action="store_true", help="re-download the TOI catalog")
     build.set_defaults(func=cmd_build_dataset)
 

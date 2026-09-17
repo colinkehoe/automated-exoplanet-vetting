@@ -1,11 +1,33 @@
+import os
 import socket
 import time
 
+import pandas as pd
 import pytest
 import requests
 from requests.adapters import HTTPAdapter
 
 from exovet.data.lightcurves import enforce_http_timeout
+from exovet.dataset import _iter_records
+
+
+# Targets run in spawned processes, so they must be importable module-level functions.
+def fake_target(row, author):
+    if row["TOI"] == "stall":
+        time.sleep(60)
+    if row["TOI"] == "crash":
+        os._exit(3)
+    return {"toi": row["TOI"], "author": author}
+
+
+def test_iter_records_kills_stalled_and_survives_crashed_targets():
+    rows = [pd.Series({"TOI": toi}) for toi in ("stall", "crash", "a", "b", "c")]
+    start = time.monotonic()
+    records = list(_iter_records(rows, "SPOC", workers=2, timeout=3, target=fake_target))
+    assert time.monotonic() - start < 20
+    assert records.count(None) == 2
+    assert sorted(r["toi"] for r in records if r) == ["a", "b", "c"]
+    assert all(r["author"] == "SPOC" for r in records if r)
 
 
 @pytest.fixture
