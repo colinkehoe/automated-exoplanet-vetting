@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 from pathlib import Path
 
 import numpy as np
@@ -11,6 +12,27 @@ from exovet.diagnostics.folding import in_transit_mask
 
 DEFAULT_DOWNLOAD_DIR = Path("cache/lightcurves")
 MAX_SECTORS = 10
+# (connect, read) seconds; the read timeout bounds a stall, not a whole download.
+HTTP_TIMEOUT = (30, 120)
+
+
+def enforce_http_timeout(timeout: tuple[float, float] = HTTP_TIMEOUT) -> None:
+    """Give requests a default timeout wherever the caller passes none.
+
+    astroquery downloads with ``timeout=None``, which disables socket timeouts,
+    so a stalled MAST connection blocks forever. Signals cannot reliably break
+    that read on macOS, where they may be delivered to another thread.
+    """
+    from requests.adapters import HTTPAdapter
+
+    original = getattr(HTTPAdapter.send, "__wrapped__", HTTPAdapter.send)
+
+    @functools.wraps(original)
+    def send(self, request, *args, timeout=None, **kwargs):
+        return original(self, request, *args, timeout=timeout or default, **kwargs)
+
+    default = timeout
+    HTTPAdapter.send = send
 
 
 def fetch_lightcurve(
@@ -27,6 +49,7 @@ def fetch_lightcurve(
     """
     import lightkurve as lk
 
+    enforce_http_timeout()
     exptime = 120 if author == "SPOC" else None
     search = lk.search_lightcurve(f"TIC {tic_id}", mission="TESS", author=author, exptime=exptime)
     if len(search) == 0:

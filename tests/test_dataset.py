@@ -1,34 +1,41 @@
+import socket
 import time
 
-import pandas as pd
 import pytest
+import requests
+from requests.adapters import HTTPAdapter
 
-from exovet import dataset
-
-
-def _swallow_errors(cand, author):
-    # Like astroquery's S3-to-MAST fallback: catch Exception, then stall again.
-    try:
-        time.sleep(30)
-    except Exception:  # noqa: BLE001, S110
-        pass
-    time.sleep(30)
+from exovet.data.lightcurves import enforce_http_timeout
 
 
-@pytest.mark.parametrize("stall", [lambda cand, author: time.sleep(30), _swallow_errors])
-def test_stalled_target_is_skipped(monkeypatch, stall):
-    monkeypatch.setattr(dataset, "load_detrended", stall)
-    row = pd.Series(
-        {
-            "TIC ID": 1,
-            "TOI": "1.01",
-            "Period (days)": 2.0,
-            "Epoch (BJD)": 2459000.0,
-            "Duration (hours)": 2.0,
-            "Depth (ppm)": 1000.0,
-            "label": 1.0,
-        }
-    )
-    start = time.monotonic()
-    assert dataset._features_for(row, "SPOC", timeout=1) is None
-    assert time.monotonic() - start < 5
+@pytest.fixture
+def recorded_timeouts(monkeypatch):
+    seen = []
+
+    def fake_send(self, request, *args, timeout=None, **kwargs):
+        seen.append(timeout)
+        raise requests.ConnectionError("not sent")
+
+    monkeypatch.setattr(HTTPAdapter, "send", fake_send)
+    return seen
+
+
+def test_default_timeout_applied_when_caller_passes_none(recorded_timeouts):
+    enforce_http_timeout((1, 2))
+    enforce_http_timeout((1, 2))  # idempotent: must not wrap twice
+    for timeout in (None, 5):
+        with pytest.raises(requests.ConnectionError):
+            requests.get("https://example.invalid", timeout=timeout)
+    assert recorded_timeouts == [(1, 2), 5]
+    assert not hasattr(HTTPAdapter.send.__wrapped__, "__wrapped__")
+
+
+def test_stalled_server_times_out(monkeypatch):
+    monkeypatch.setattr(HTTPAdapter, "send", HTTPAdapter.send)  # restored afterwards
+    with socket.create_server(("127.0.0.1", 0)) as server:  # accepts, never replies
+        port = server.getsockname()[1]
+        enforce_http_timeout((1, 1))
+        start = time.monotonic()
+        with pytest.raises(requests.ReadTimeout):
+            requests.get(f"http://127.0.0.1:{port}", timeout=None)
+        assert time.monotonic() - start < 5
