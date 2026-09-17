@@ -13,7 +13,7 @@ import pandas as pd
 
 from exovet.data.lightcurves import load_detrended
 from exovet.data.toi import row_to_candidate
-from exovet.features import compute_features
+from exovet.features import catalog_features, compute_features
 
 log = logging.getLogger(__name__)
 
@@ -86,6 +86,41 @@ def _iter_records(
             yield record
 
 
+def refresh_catalog_features(dataset: pd.DataFrame, catalog: pd.DataFrame) -> pd.DataFrame:
+    """Recompute labels and catalog-only features for existing rows.
+
+    Needs no light curves, so new catalog features (or catalog updates) reach
+    the whole dataset without re-downloading anything. Rows whose TOI has left
+    the catalog, lost its label, or no longer converts are kept unchanged.
+    """
+    by_toi = catalog.set_index("TOI")
+    updates = {}
+    for toi in dataset["toi"]:
+        if toi not in by_toi.index:
+            continue
+        row = by_toi.loc[toi].copy()  # TOI numbers are unique in the catalog
+        row["TOI"] = toi
+        cand = row_to_candidate(row)
+        if cand is None or pd.isna(row["label"]):
+            continue
+        updates[toi] = {"label": int(row["label"]), **catalog_features(cand)}
+    if not updates:
+        return dataset
+
+    fresh = pd.DataFrame.from_dict(updates, orient="index")
+    out = dataset.set_index("toi")
+    for column in fresh.columns:
+        if column not in out.columns:
+            out[column] = float("nan")
+    out.loc[fresh.index, fresh.columns] = fresh  # unlike update(), also copies NaN
+    out["label"] = out["label"].astype(int)
+    # Catalog features first, matching compute_features' order.
+    base = ["tic_id", "label"]
+    catalog_cols = [c for c in fresh.columns if c != "label"]
+    rest = [c for c in out.columns if c not in base and c not in catalog_cols]
+    return out[base + catalog_cols + rest].reset_index()
+
+
 def build_dataset(
     catalog: pd.DataFrame,
     out: Path = DEFAULT_DATASET,
@@ -100,13 +135,17 @@ def build_dataset(
     TOIs are visited in a seeded random order so a ``limit`` gives a
     representative sample rather than the (brighter, better-observed) earliest
     TOIs. Rows already present in ``out`` are skipped, so an interrupted run
-    resumes. A target still running after ``timeout`` seconds is killed and
+    resumes; their labels and catalog-only features are refreshed first. A target still running after ``timeout`` seconds is killed and
     skipped.
     """
     out = Path(out)
     done: set[str] = set()
+    columns = None
     if out.exists():
-        done = set(pd.read_csv(out, dtype={"toi": str})["toi"])
+        existing = refresh_catalog_features(pd.read_csv(out, dtype={"toi": str}), catalog)
+        existing.to_csv(out, index=False)
+        done = set(existing["toi"])
+        columns = list(existing.columns)
 
     labeled = catalog[catalog["label"].notna()].sample(frac=1, random_state=seed)
     if limit is not None:
@@ -118,7 +157,10 @@ def build_dataset(
     for i, record in enumerate(records, 1):
         if record is None:
             continue
-        pd.DataFrame([record]).to_csv(out, mode="a", header=not out.exists(), index=False)
+        row = pd.DataFrame([record])
+        if columns is None:
+            columns = list(row.columns)
+        row[columns].to_csv(out, mode="a", header=not out.exists(), index=False)
         log.info("[%d/%d] TOI-%s", i, len(labeled), record["toi"])
 
     return pd.read_csv(out, dtype={"toi": str})

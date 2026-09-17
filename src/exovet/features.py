@@ -8,6 +8,7 @@ from exovet.candidate import Candidate
 from exovet.diagnostics.odd_even import odd_even_features
 from exovet.diagnostics.secondary import secondary_features
 from exovet.diagnostics.shape import consistency_features, shape_features
+from exovet.diagnostics.stellar import stellar_features
 
 
 def candidate_features(cand: Candidate) -> dict[str, float]:
@@ -19,11 +20,18 @@ def candidate_features(cand: Candidate) -> dict[str, float]:
     }
 
 
+def catalog_features(cand: Candidate) -> dict[str, float]:
+    """Features that need only the catalog entry, not the light curve."""
+    features = candidate_features(cand)
+    features.update(stellar_features(cand))
+    return {k: float(v) for k, v in features.items()}
+
+
 def compute_features(time: np.ndarray, flux: np.ndarray, cand: Candidate) -> dict[str, float]:
     """Compute all features for a candidate from a detrended light curve."""
     time = np.asarray(time, dtype=float)
     flux = np.asarray(flux, dtype=float)
-    features = candidate_features(cand)
+    features = catalog_features(cand)
     features.update(shape_features(time, flux, cand))
     features.update(consistency_features(time, flux, cand))
     features.update(odd_even_features(time, flux, cand))

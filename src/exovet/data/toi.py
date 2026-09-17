@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from exovet.candidate import BTJD_OFFSET, Candidate
+from exovet.candidate import BTJD_OFFSET, Candidate, Star
 
 TOI_URL = "https://exofop.ipac.caltech.edu/tess/download_toi.php?sort=toi&output=csv"
 DEFAULT_CACHE = Path("cache/toi.csv")
@@ -27,6 +27,26 @@ def load_toi_catalog(path: Path = DEFAULT_CACHE, refresh: bool = False) -> pd.Da
     return df
 
 
+# Physical host star properties only. Columns TFOP updates during follow-up
+# (priorities, observation counts, comments) would leak the disposition.
+STAR_COLUMNS = {
+    "teff": "Stellar Eff Temp (K)",
+    "logg": "Stellar log(g) (cm/s^2)",
+    "radius": "Stellar Radius (R_Sun)",
+    "mass": "Stellar Mass (M_Sun)",
+    "distance": "Stellar Distance (pc)",
+    "tess_mag": "TESS Mag",
+}
+
+
+def row_to_star(row: pd.Series) -> Star:
+    values = {}
+    for field, column in STAR_COLUMNS.items():
+        value = pd.to_numeric(row.get(column), errors="coerce")
+        values[field] = float(value) if pd.notna(value) else float("nan")
+    return Star(**values)
+
+
 def row_to_candidate(row: pd.Series) -> Candidate | None:
     """Convert a TOI table row, or return None if its ephemeris is incomplete."""
     values = [row["Period (days)"], row["Epoch (BJD)"], row["Duration (hours)"], row["Depth (ppm)"]]
@@ -42,6 +62,7 @@ def row_to_candidate(row: pd.Series) -> Candidate | None:
         duration=duration_hr / 24.0,
         depth=depth_ppm * 1e-6,
         toi=str(row["TOI"]),
+        star=row_to_star(row),
     )
 
 

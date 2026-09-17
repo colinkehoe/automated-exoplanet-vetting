@@ -28,3 +28,21 @@ def test_train_save_load(tmp_path):
     loaded = VettingModel.load(path)
     p = loaded.predict_proba({"noise_ppm": 100.0, "odd_even_sigma": 0.1})
     assert 0 <= p[0] <= 1
+
+
+def test_backfilled_missingness_is_not_learned():
+    # Label is perfectly encoded by whether star_logg is missing, and nothing else.
+    rng = np.random.default_rng(1)
+    n = 300
+    label = rng.integers(0, 2, n)
+    df = pd.DataFrame(
+        {
+            "toi": [f"{i}.01" for i in range(n)],
+            "tic_id": np.arange(n),
+            "label": label,
+            "star_logg": np.where(label == 1, 4.4, np.nan),
+            "noise_ppm": rng.normal(100, 10, n),
+        }
+    )
+    _, metrics = train(df, folds=3)
+    assert metrics["roc_auc"] < 0.65

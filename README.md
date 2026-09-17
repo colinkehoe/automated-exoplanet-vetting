@@ -14,6 +14,17 @@ disposition as labels.
 | Secondary eclipse (phase 0.5 and a phase scan) | eclipsing binaries, including eccentric ones |
 | Transit shape (inner vs. full depth) | V-shaped grazing binaries |
 | Per-transit consistency | systematics dominated by one or two events |
+| Host star (radius, density, Teff, distance) and implied planet radius | giant or distant hosts, companions too large to be planets |
+| Observed vs. expected duration for the host's density | eclipsing binaries and signals blended from another star |
+
+Stellar values come from the TOI catalog. Follow-up tends to fill them in for confirmed
+planets, so the model median-imputes them rather than learning from their absence.
+
+## Performance
+
+Cross-validated on 2,518 dispositioned TOIs with SPOC 2-minute light curves
+(1,388 planets, 1,130 false positives): ROC-AUC 0.947, average precision 0.954.
+Without the host star features: ROC-AUC 0.890.
 
 ## Usage
 
@@ -25,7 +36,11 @@ uv run exovet vet 700.01                      # features plus planet probability
 ```
 
 `build-dataset` appends to `data/features.csv` as it goes, so you can interrupt it and
-run it again to resume. Downloads are cached under `cache/`.
+run it again to resume. Each run first refreshes labels and catalog-only features for
+existing rows (`--limit 0` does only that). Targets that stall are killed after
+`--timeout` seconds and retried on the next run. Downloads are cached under `cache/`.
+On a laptop, keep the machine awake (e.g. `caffeinate -i`) and plugged in; sleep stalls
+downloads.
 
 ## Development
 
