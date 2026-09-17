@@ -35,6 +35,13 @@ Feature groups, by grouped CV ROC-AUC: light curve and catalog only 0.890, + hos
 0.946, + centroid shift 0.951. Sigmoid calibration (on star-grouped folds) keeps the
 predicted probabilities close to the observed planet fraction.
 
+Trimming the host star features was tested and rejected: an exhaustive search over
+the six groups (64 combinations) picked `star_teff + planet radius + duration ratio`,
+but across 5 CV seeds and three temporal cutoffs that set was no better than the full
+one (CV -0.0014, temporal +0.002/+0.008/-0.000). Dropping the host star features
+altogether costs a lot (CV 0.908, temporal 0.823), so the information is real even
+though `star_distance` dominates explanations for the most planet-like candidates.
+
 Scores on newer candidates are lower than the cross-validated figure. Later TOIs are
 fainter and noisier with fewer transits, and a model trained on earlier TOIs has seen
 fewer such targets. Recently resolved TOIs are also mostly planets, so the planet
