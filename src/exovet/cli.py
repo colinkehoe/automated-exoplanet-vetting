@@ -97,8 +97,10 @@ def cmd_score(args: argparse.Namespace) -> None:
 def cmd_export_demo(args: argparse.Namespace) -> None:
     from exovet.demo import Pipeline, export
 
+    # argparse appends to its default, so the default lives here instead.
+    specs = args.pipeline or [f"SPOC:{DEFAULT_DATASET}:data/ranked.csv:{DEFAULT_MODEL}"]
     pipelines = []
-    for spec in args.pipeline:
+    for spec in specs:
         author, dataset, ranked, model = spec.split(":")
         pipelines.append(
             Pipeline(
@@ -187,10 +189,7 @@ def main(argv: list[str] | None = None) -> None:
         help="a pipeline to include; repeat for several",
     )
     ex.add_argument("--curves", type=int, default=150, help="candidates to fold light curves for")
-    ex.set_defaults(
-        func=cmd_export_demo,
-        pipeline=[f"SPOC:{DEFAULT_DATASET}:data/ranked.csv:{DEFAULT_MODEL}"],
-    )
+    ex.set_defaults(func=cmd_export_demo)
 
     ev = sub.add_parser("evaluate", help="grouped CV, temporal holdout and calibration")
     ev.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)

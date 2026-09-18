@@ -112,6 +112,10 @@
       .detail-title { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-bottom: 2px; }
       .detail-title b { font: 700 19px/1.2 var(--display); }
       .pill { font: 500 11px/1 var(--mono); padding: 4px 7px; border-radius: 999px; border: 1px solid var(--line); color: var(--ink-dim); }
+      .warn {
+        font-size: 13px; color: var(--amber); border-left: 2px solid var(--amber);
+        padding-left: 10px; margin: 10px 0;
+      }
       .note { font-size: 13px; color: var(--ink-dim); border-left: 2px solid var(--line); padding-left: 10px; margin: 10px 0; }
       .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 6px 14px; margin-top: 10px; }
       .kv { display: flex; justify-content: space-between; gap: 8px; font-size: 12.5px; border-bottom: 1px dotted var(--line); padding: 3px 0; }
@@ -187,6 +191,10 @@
                 <option value="low">Below 0.50</option>
               </select>
               <select id="pipeline" aria-label="Filter by pipeline"></select>
+              <select id="dip" aria-label="Filter by measured dip">
+                <option value="all">Measured or not</option>
+                <option value="yes">Only a measured dip</option>
+              </select>
               <select id="host" aria-label="Filter by host star">
                 <option value="all">Any host star</option>
                 <option value="m">M dwarf (&lt;4000 K)</option>
@@ -268,11 +276,7 @@
           </div>
           <div>
             <h2>An independent check</h2>
-            <p>
-              Ten scored candidates had already been called by the TESS team, using a label the
-              model never saw. Confirmed planets land near the top, eclipsing binaries near the
-              bottom.
-            </p>
+            <p id="known-intro"></p>
             <div class="card" id="known"></div>
             <h2 style="margin-top: 20px">Read this before believing it</h2>
             <div class="caveats">
@@ -283,6 +287,7 @@
                 <li><b>Expect ~0.90, not ~0.95, on new candidates.</b> Recent TOIs are fainter and noisier than the ones the model learned from.</li>
                 <li><b>The two pipelines are scored by different models, and their numbers are not comparable.</b> SPOC 2-minute light curves resolve the shape of a transit; QLP full-frame images sample every 30 minutes and blur it. On the same 2,422 TOIs the SPOC model reaches ROC-AUC 0.957 against QLP's 0.929, so rank candidates within a pipeline, not across the two.</li>
                 <li><b>The catalogue ephemeris is taken on trust.</b> Periods and epochs are not re-fitted, so a wrong period means the diagnostics measure the wrong thing.</li>
+                <li><b>Some high scores rest on no measured dip at all.</b> Where the pipeline's sampling washes out a shallow transit, the depth we measure can come out negative — a brightening — and the model falls back on the host star and the catalogue entry. That is 31 of the 244 QLP candidates above 0.90, against 2 of 374 on the SPOC side. Those candidates carry a warning, and the filter above hides them.</li>
                 <li><b>Coverage still is not everything.</b> A candidate needs a light curve from one of the two pipelines; TOIs with neither, or with no usable ephemeris in the catalogue, are absent.</li>
                 <li><b>Part of a high score is the host star.</b> Nearby small stars host more confirmed planets, and the model has learned that prior along with the transit evidence.</li>
               </ul>
@@ -533,6 +538,7 @@
         const band = document.getElementById("band").value;
         const host = document.getElementById("host").value;
         const pipeline = document.getElementById("pipeline").value;
+        const dip = document.getElementById("dip").value;
         return DATA.candidates.filter((c) => {
           if (pipeline !== "all" && c.pipeline !== pipeline) return false;
           if (q && !(`toi-${c.toi}`.includes(q) || c.toi.includes(q) || String(c.tic_id).includes(q))) return false;
@@ -540,6 +546,7 @@
           if (band === "mid" && (c.probability < 0.5 || c.probability >= 0.9)) return false;
           if (band === "low" && c.probability >= 0.5) return false;
           if (host !== "all" && hostBand(c.features.star_teff) !== host) return false;
+          if (dip === "yes" && !(c.features.depth_snr > 0)) return false;
           return true;
         });
       }
@@ -582,10 +589,13 @@
         const head = document.createElement("div");
         head.innerHTML =
           `<div class="detail-title"><b>TOI-${c.toi}</b>` +
-          `<span class="pill">rank ${c.rank} of ${DATA.candidates.length}</span>` +
+          `<span class="pill">rank ${c.rank} of ${pipelineOf(c.pipeline).n_candidates.toLocaleString()}</span>` +
           `<span class="pill" style="color:var(--violet)">score ${c.probability.toFixed(3)}</span>` +
           `<span class="pill">${c.pipeline} model</span></div>` +
           `<p class="meta">TIC ${c.tic_id} · <a href="https://exofop.ipac.caltech.edu/tess/target.php?id=${c.tic_id}" target="_blank" rel="noopener">ExoFOP</a></p>` +
+          (c.features.depth_snr !== null && c.features.depth_snr <= 0
+            ? `<p class="warn">No dip at the catalogued ephemeris: this pipeline measures a brightening, not a transit. The score rests on the host star and the catalogue entry, not on transit evidence.</p>`
+            : "") +
           (c.note ? `<p class="note">Catalogue note: ${c.note}</p>` : "");
         detail.append(head);
 
@@ -634,14 +644,15 @@
       const pipelineLabel = { SPOC: "SPOC 2-minute", QLP: "QLP full-frame" };
       const label = (author) => pipelineLabel[author] || author;
       const totalCandidates = () => DATA.candidates.length;
+      const pipelineOf = (author) => DATA.pipelines.find((p) => p.author === author);
 
       function renderStats() {
         const high = DATA.candidates.filter((c) => c.probability >= 0.9).length;
-        const trained = DATA.pipelines.reduce((n, p) => n + p.training.n, 0);
+        const trained = DATA.pipelines.map((p) => p.training.n.toLocaleString()).join(" / ");
         const stats = [
           [totalCandidates().toLocaleString(), "candidates scored"],
           [high.toLocaleString(), "score 0.90 or above"],
-          [trained.toLocaleString(), "TOIs used for training"],
+          [trained, DATA.pipelines.map((p) => p.author).join(" / ") + " training TOIs"],
           [DATA.pipelines.map((p) => p.metrics.grouped_cv.mean.roc_auc.toFixed(3)).join(" / "),
            DATA.pipelines.map((p) => p.author).join(" / ") + " ROC-AUC"],
         ];
@@ -651,10 +662,10 @@
 
         const select = document.getElementById("pipeline");
         select.innerHTML =
-          (DATA.pipelines.length > 1 ? `<option value="all">Both pipelines</option>` : "") +
           DATA.pipelines
-            .map((p) => `<option value="${p.author}">${label(p.author)}</option>`)
-            .join("");
+            .map((p) => `<option value="${p.author}">${label(p.author)} · ${p.n_candidates.toLocaleString()}</option>`)
+            .join("") +
+          (DATA.pipelines.length > 1 ? `<option value="all">Both, listed separately</option>` : "");
       }
 
       /** 1.5 stays 1.5; 4000.0 becomes 4000. */
@@ -682,10 +693,16 @@
         document.getElementById("strata").append(strataChart(strata));
 
         const names = { CP: "confirmed planet", KP: "known planet", EB: "eclipsing binary", FP: "false positive" };
-        document.getElementById("known").innerHTML = DATA.known
+        document.getElementById("known-intro").textContent =
+          `${DATA.known.length} scored candidates had already been called by the TESS team, using a ` +
+          `label the models never saw. Ranks are within each pipeline's own list.`;
+        const known = [...DATA.known].sort(
+          (a, b) => a.pipeline.localeCompare(b.pipeline) || a.rank - b.rank
+        );
+        document.getElementById("known").innerHTML = known
           .map((k) => {
             const planet = k.disposition === "CP" || k.disposition === "KP";
-            return `<div class="kv"><span>TOI-${k.toi} · ${names[k.disposition]}</span>` +
+            return `<div class="kv"><span>TOI-${k.toi} · ${names[k.disposition]} <span class="muted">${k.pipeline}</span></span>` +
               `<b style="color:${planet ? "var(--violet)" : "var(--against)"}">rank ${k.rank} · ${k.probability.toFixed(3)}</b></div>`;
           })
           .join("");
@@ -769,7 +786,7 @@
         select(DATA.candidates[0]);
         renderResults();
         renderExamples();
-        for (const id of ["q", "band", "host"]) {
+        for (const id of ["q", "band", "host", "pipeline", "dip"]) {
           document.getElementById(id).addEventListener("input", renderRows);
         }
       }
