@@ -7,6 +7,8 @@ it, so everything it shows has to be precomputed here.
 from __future__ import annotations
 
 import json
+from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -46,6 +48,21 @@ HIGHLIGHT_FEATURES = [
 ]
 
 
+@dataclass(frozen=True)
+class Pipeline:
+    """One pipeline's dataset, model and scored candidates.
+
+    SPOC and QLP scores come from different models and are not comparable,
+    so the page keeps them apart rather than merging them into one ranking.
+    """
+
+    author: str
+    dataset: pd.DataFrame
+    ranked: pd.DataFrame
+    model: VettingModel
+    metrics: dict | None = None
+
+
 def _clean(value):
     """JSON has no NaN or numpy scalars."""
     if isinstance(value, (np.integer, int)):
@@ -54,7 +71,7 @@ def _clean(value):
     return None if not np.isfinite(number) else round(number, 6)
 
 
-def folded_curve(cand: Candidate) -> dict | None:
+def folded_curve(cand: Candidate, author: str = "SPOC") -> dict | None:
     """Phase-folded light curve around transit, as points and a binned median.
 
     Points are integer pairs of (minutes from mid-transit, parts per million
@@ -62,7 +79,7 @@ def folded_curve(cand: Candidate) -> dict | None:
     page; the reader multiplies back out.
     """
     try:
-        lc = detrend(load_cached(cand), cand)
+        lc = detrend(load_cached(cand, author=author), cand)
     except Exception:  # noqa: BLE001 - target not in the cache, or unusable
         return None
     time = np.asarray(lc.time.value, dtype=float)
@@ -116,7 +133,7 @@ def folded_curve(cand: Candidate) -> dict | None:
 
 
 def candidate_records(
-    ranked: pd.DataFrame, model: VettingModel, catalog: pd.DataFrame
+    ranked: pd.DataFrame, model: VettingModel, catalog: pd.DataFrame, author: str = "SPOC"
 ) -> list[dict]:
     notes = catalog.set_index("TOI")["Comments"]
     records = []
@@ -125,6 +142,7 @@ def candidate_records(
         records.append(
             {
                 "rank": rank,
+                "pipeline": author,
                 "toi": row["toi"],
                 "tic_id": int(row["tic_id"]),
                 "probability": round(float(row["planet_probability"]), 4),
@@ -143,7 +161,9 @@ def candidate_records(
     return records
 
 
-def known_dispositions(ranked: pd.DataFrame, catalog: pd.DataFrame) -> list[dict]:
+def known_dispositions(
+    ranked: pd.DataFrame, catalog: pd.DataFrame, author: str = "SPOC"
+) -> list[dict]:
     """Candidates the TESS team already called, which the model never trained on."""
     tess = catalog.set_index("TOI")["TESS Disposition"]
     out = []
@@ -153,6 +173,7 @@ def known_dispositions(ranked: pd.DataFrame, catalog: pd.DataFrame) -> list[dict
             out.append(
                 {
                     "rank": rank,
+                    "pipeline": author,
                     "toi": row["toi"],
                     "probability": round(float(row["planet_probability"]), 4),
                     "disposition": label,
@@ -163,46 +184,60 @@ def known_dispositions(ranked: pd.DataFrame, catalog: pd.DataFrame) -> list[dict
 
 def export(
     out: Path,
-    dataset: pd.DataFrame,
-    ranked: pd.DataFrame,
+    pipelines: Sequence[Pipeline],
     catalog: pd.DataFrame,
-    model: VettingModel,
-    metrics: dict | None = None,
     curves: int = CURVE_COUNT,
 ) -> dict[str, Path]:
     """Write data.json and curves.json, returning the paths written."""
     out.mkdir(parents=True, exist_ok=True)
-    report = metrics if metrics is not None else evaluate(dataset, catalog, seeds=2)
-    labels = dataset["label"].astype(int)
-
     data = {
         "generated": datetime.now(UTC).strftime("%Y-%m-%d"),
-        "training": {
-            "n": len(dataset),
-            "n_planets": int(labels.sum()),
-            "n_false_positives": int((1 - labels).sum()),
-        },
-        "metrics": {
-            "grouped_cv": report["grouped_cv"],
-            "temporal": report["temporal"],
-            "calibration": report["calibration"].reset_index().to_dict("records"),
-            "strata": report["strata"].reset_index().to_dict("records"),
-        },
-        "known": known_dispositions(ranked, catalog),
-        "candidates": candidate_records(ranked, model, catalog),
+        "pipelines": [],
+        "known": [],
+        "candidates": [],
     }
+
+    for pipeline in pipelines:
+        report = pipeline.metrics
+        if report is None:
+            report = evaluate(pipeline.dataset, catalog, seeds=2)
+        labels = pipeline.dataset["label"].astype(int)
+        records = candidate_records(pipeline.ranked, pipeline.model, catalog, pipeline.author)
+        data["pipelines"].append(
+            {
+                "author": pipeline.author,
+                "n_candidates": len(records),
+                "training": {
+                    "n": len(pipeline.dataset),
+                    "n_planets": int(labels.sum()),
+                    "n_false_positives": int((1 - labels).sum()),
+                },
+                "metrics": {
+                    "grouped_cv": report["grouped_cv"],
+                    "temporal": report["temporal"],
+                    "calibration": report["calibration"].reset_index().to_dict("records"),
+                    "strata": report["strata"].reset_index().to_dict("records"),
+                },
+            }
+        )
+        data["candidates"] += records
+        data["known"] += known_dispositions(pipeline.ranked, catalog, pipeline.author)
 
     by_toi = catalog.set_index("TOI")
     folded = {}
-    for row in data["candidates"][:curves] + data["candidates"][-10:]:
-        entry = by_toi.loc[row["toi"]].copy()
-        entry["TOI"] = row["toi"]
-        cand = row_to_candidate(entry)
-        curve = folded_curve(cand) if cand is not None else None
-        if curve:
-            curve["period"] = round(cand.period, 5)
-            curve["duration_hours"] = round(cand.duration * 24, 3)
-            folded[row["toi"]] = curve
+    for pipeline in pipelines:
+        rows = [r for r in data["candidates"] if r["pipeline"] == pipeline.author]
+        for row in rows[:curves] + rows[-10:]:
+            if row["toi"] in folded:
+                continue
+            entry = by_toi.loc[row["toi"]].copy()
+            entry["TOI"] = row["toi"]
+            cand = row_to_candidate(entry)
+            curve = folded_curve(cand, pipeline.author) if cand is not None else None
+            if curve:
+                curve["period"] = round(cand.period, 5)
+                curve["duration_hours"] = round(cand.duration * 24, 3)
+                folded[row["toi"]] = curve
 
     paths = {"data": out / "data.json", "curves": out / "curves.json"}
     paths["data"].write_text(json.dumps(data, separators=(",", ":")))

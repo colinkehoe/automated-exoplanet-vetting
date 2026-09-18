@@ -198,6 +198,7 @@ def build_dataset(
     timeout: float = TARGET_TIMEOUT,
     labeled: bool = True,
     detection: str | None = None,
+    exclude_detection: str | None = None,
 ) -> pd.DataFrame:
     """Compute features for TOIs, appending to ``out`` as it goes.
 
@@ -205,7 +206,8 @@ def build_dataset(
     ones (PC/APC and undispositioned), whose rows carry no label and are meant
     for scoring rather than training. ``detection`` keeps only TOIs whose
     catalog Detection field mentions that pipeline, e.g. SPOC for the targets
-    that have 2-minute light curves.
+    that have 2-minute light curves; ``exclude_detection`` drops them instead,
+    which is how the QLP-only candidates are selected.
 
     TOIs are visited in a seeded random order so a ``limit`` gives a
     representative sample rather than the (brighter, better-observed) earliest
@@ -226,6 +228,8 @@ def build_dataset(
     targets = catalog[has_label if labeled else ~has_label]
     if detection:
         targets = targets[targets["Detection"].str.contains(detection, na=False)]
+    if exclude_detection:
+        targets = targets[~targets["Detection"].str.contains(exclude_detection, na=False)]
     targets = targets.sample(frac=1, random_state=seed)
     if limit is not None:
         targets = targets.head(limit)

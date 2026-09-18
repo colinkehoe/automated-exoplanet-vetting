@@ -151,7 +151,7 @@
       @media (max-width: 860px) { .cols { grid-template-columns: 1fr; } .table-wrap { max-height: 380px; } }
       /* At thumb width the period column is the first thing worth losing. */
       @media (max-width: 560px) {
-        th:nth-child(5), td:nth-child(5) { display: none; }
+        th:nth-child(3), td:nth-child(3), th:nth-child(6), td:nth-child(6) { display: none; }
         select { flex: 1 1 140px; }
       }
     </style>
@@ -186,6 +186,7 @@
                 <option value="mid">0.50 – 0.90</option>
                 <option value="low">Below 0.50</option>
               </select>
+              <select id="pipeline" aria-label="Filter by pipeline"></select>
               <select id="host" aria-label="Filter by host star">
                 <option value="all">Any host star</option>
                 <option value="m">M dwarf (&lt;4000 K)</option>
@@ -198,7 +199,7 @@
               <table>
                 <thead>
                   <tr>
-                    <th class="num">#</th><th>TOI</th><th>Score</th>
+                    <th class="num">#</th><th>TOI</th><th>Pipeline</th><th>Score</th>
                     <th class="num">Depth S/N</th><th class="num">Period (d)</th>
                   </tr>
                 </thead>
@@ -248,14 +249,14 @@
         <div class="cols">
           <div>
             <h2>How well it does</h2>
-            <div class="stats" id="result-stats"></div>
+            <div id="result-stats" style="margin-bottom:16px"></div>
             <p>
               Cross-validation keeps every TOI of the same star in one fold, so sibling candidates
               can't leak across the split. The harder test trains only on candidates alerted before
               2021 and scores the later ones — the situation the model is actually in.
             </p>
             <figure class="card">
-              <h3>Do the probabilities mean anything?</h3>
+              <h3>Do the probabilities mean anything? <span class="muted" id="chart-pipeline"></span></h3>
               <div id="calibration"></div>
               <figcaption>Each point is a bin of candidates. On the dashed line, a score of 0.8 means 80% turned out to be planets.</figcaption>
             </figure>
@@ -280,8 +281,9 @@
                 <li><b>This is a ranking, not a discovery.</b> A high score means "worth observing next", not "this is a planet". Confirming one needs follow-up observations this project does not do.</li>
                 <li><b>The probabilities are optimistic in absolute terms.</b> They are calibrated against a training set that is 55% planets. Unresolved candidates are likely a good deal less planet-rich, so treat the ordering as the real output.</li>
                 <li><b>Expect ~0.90, not ~0.95, on new candidates.</b> Recent TOIs are fainter and noisier than the ones the model learned from.</li>
-                <li><b>Coverage is partial.</b> Only candidates with SPOC 2-minute light curves are scored — about 1,000 of some 5,300 unresolved TOIs.</li>
+                <li><b>The two pipelines are scored by different models, and their numbers are not comparable.</b> SPOC 2-minute light curves resolve the shape of a transit; QLP full-frame images sample every 30 minutes and blur it. On the same 2,422 TOIs the SPOC model reaches ROC-AUC 0.957 against QLP's 0.929, so rank candidates within a pipeline, not across the two.</li>
                 <li><b>The catalogue ephemeris is taken on trust.</b> Periods and epochs are not re-fitted, so a wrong period means the diagnostics measure the wrong thing.</li>
+                <li><b>Coverage still is not everything.</b> A candidate needs a light curve from one of the two pipelines; TOIs with neither, or with no usable ephemeris in the catalogue, are absent.</li>
                 <li><b>Part of a high score is the host star.</b> Nearby small stars host more confirmed planets, and the model has learned that prior along with the transit evidence.</li>
               </ul>
             </div>
@@ -530,7 +532,9 @@
         const q = document.getElementById("q").value.trim().toLowerCase();
         const band = document.getElementById("band").value;
         const host = document.getElementById("host").value;
+        const pipeline = document.getElementById("pipeline").value;
         return DATA.candidates.filter((c) => {
+          if (pipeline !== "all" && c.pipeline !== pipeline) return false;
           if (q && !(`toi-${c.toi}`.includes(q) || c.toi.includes(q) || String(c.tic_id).includes(q))) return false;
           if (band === "high" && c.probability < 0.9) return false;
           if (band === "mid" && (c.probability < 0.5 || c.probability >= 0.9)) return false;
@@ -551,6 +555,7 @@
           tr.innerHTML =
             `<td class="num muted">${c.rank}</td>` +
             `<td>TOI-${c.toi}</td>` +
+            `<td class="muted">${c.pipeline}</td>` +
             `<td><span class="score"><i style="--w:${(c.probability * 100).toFixed(0)}%"></i>${c.probability.toFixed(3)}</span></td>` +
             `<td class="num">${fmt(c.features.depth_snr, 1)}</td>` +
             `<td class="num">${CURVES[c.toi] ? CURVES[c.toi].period.toFixed(2) : "—"}</td>`;
@@ -568,7 +573,9 @@
       function select(c) {
         selected = c;
         for (const tr of rowsBody.children) {
-          tr.setAttribute("aria-selected", String(tr.children[1]?.textContent === `TOI-${c.toi}`));
+          const same = tr.children[1]?.textContent === `TOI-${c.toi}` &&
+            tr.children[2]?.textContent === c.pipeline;
+          tr.setAttribute("aria-selected", String(same));
         }
         const curve = CURVES[c.toi];
         detail.textContent = "";
@@ -576,7 +583,8 @@
         head.innerHTML =
           `<div class="detail-title"><b>TOI-${c.toi}</b>` +
           `<span class="pill">rank ${c.rank} of ${DATA.candidates.length}</span>` +
-          `<span class="pill" style="color:var(--violet)">score ${c.probability.toFixed(3)}</span></div>` +
+          `<span class="pill" style="color:var(--violet)">score ${c.probability.toFixed(3)}</span>` +
+          `<span class="pill">${c.pipeline} model</span></div>` +
           `<p class="meta">TIC ${c.tic_id} · <a href="https://exofop.ipac.caltech.edu/tess/target.php?id=${c.tic_id}" target="_blank" rel="noopener">ExoFOP</a></p>` +
           (c.note ? `<p class="note">Catalogue note: ${c.note}</p>` : "");
         detail.append(head);
@@ -623,40 +631,55 @@
         detail.append(grid);
       }
 
+      const pipelineLabel = { SPOC: "SPOC 2-minute", QLP: "QLP full-frame" };
+      const label = (author) => pipelineLabel[author] || author;
+      const totalCandidates = () => DATA.candidates.length;
+
       function renderStats() {
-        const cands = DATA.candidates;
-        const high = cands.filter((c) => c.probability >= 0.9).length;
+        const high = DATA.candidates.filter((c) => c.probability >= 0.9).length;
+        const trained = DATA.pipelines.reduce((n, p) => n + p.training.n, 0);
         const stats = [
-          [cands.length.toLocaleString(), "candidates scored"],
+          [totalCandidates().toLocaleString(), "candidates scored"],
           [high.toLocaleString(), "score 0.90 or above"],
-          [DATA.training.n.toLocaleString(), "TOIs used for training"],
-          [DATA.metrics.grouped_cv.mean.roc_auc.toFixed(3), "ROC-AUC, grouped CV"],
+          [trained.toLocaleString(), "TOIs used for training"],
+          [DATA.pipelines.map((p) => p.metrics.grouped_cv.mean.roc_auc.toFixed(3)).join(" / "),
+           DATA.pipelines.map((p) => p.author).join(" / ") + " ROC-AUC"],
         ];
         document.getElementById("explorer-stats").innerHTML = stats
-          .map(([b, s]) => `<div class="stat"><b>${b}</b><span>${s}</span></div>`)
+          .map(([b, t]) => `<div class="stat"><b>${b}</b><span>${t}</span></div>`)
           .join("");
 
-        const m = DATA.metrics;
-        document.getElementById("result-stats").innerHTML = [
-          [m.grouped_cv.mean.roc_auc.toFixed(3), "ROC-AUC, grouped CV"],
-          [m.grouped_cv.mean.average_precision.toFixed(3), "average precision"],
-          [m.temporal.roc_auc.toFixed(3), "ROC-AUC, trained on pre-2021"],
-          [m.grouped_cv.mean.brier.toFixed(3), "Brier score (lower is better)"],
-        ]
-          .map(([b, s]) => `<div class="stat"><b>${b}</b><span>${s}</span></div>`)
-          .join("");
+        const select = document.getElementById("pipeline");
+        select.innerHTML =
+          (DATA.pipelines.length > 1 ? `<option value="all">Both pipelines</option>` : "") +
+          DATA.pipelines
+            .map((p) => `<option value="${p.author}">${label(p.author)}</option>`)
+            .join("");
       }
 
+      /** 1.5 stays 1.5; 4000.0 becomes 4000. */
       const trim = (v) => String(+(+v).toFixed(1)).replace(/\.0$/, "");
 
       function renderResults() {
-        document.getElementById("calibration").append(calibrationChart(DATA.metrics.calibration));
-        const pretty = (s) =>
-          s.replace("star_teff", "Teff").replace("star_distance", "distance").replace("star_radius", "radius")
-           .replace(/\(([\d.]+), ([\d.]+)\]/, (_, a, b) => (+a === 0 ? `under ${trim(b)}` : `${trim(a)}–${trim(b)}`))
-           .replace(/\(([\d.]+), inf\]/, (_, a) => `over ${trim(a)}`);
-        const rows = DATA.metrics.strata.map((r) => ({ ...r, label: pretty(r.stratum) }));
-        document.getElementById("strata").append(strataChart(rows));
+        const rows = DATA.pipelines
+          .map((p) => {
+            const cv = p.metrics.grouped_cv.mean;
+            return `<div class="kv"><span>${label(p.author)} · ${p.training.n.toLocaleString()} TOIs</span>` +
+              `<b>ROC-AUC ${cv.roc_auc.toFixed(3)} · later TOIs ${p.metrics.temporal.roc_auc.toFixed(3)} · Brier ${cv.brier.toFixed(3)}</b></div>`;
+          })
+          .join("");
+        document.getElementById("result-stats").innerHTML = `<div class="card" style="grid-column:1/-1">${rows}</div>`;
+
+        // Charts describe one model at a time; the first is the sharper one.
+        const chosen = DATA.pipelines[0];
+        document.getElementById("chart-pipeline").textContent = label(chosen.author);
+        document.getElementById("calibration").append(calibrationChart(chosen.metrics.calibration));
+        const pretty = (str) =>
+          str.replace("star_teff", "Teff").replace("star_distance", "distance").replace("star_radius", "radius")
+             .replace(/\(([\d.]+), ([\d.]+)\]/, (_, a, b) => (+a === 0 ? `under ${trim(b)}` : `${trim(a)}–${trim(b)}`))
+             .replace(/\(([\d.]+), inf\]/, (_, a) => `over ${trim(a)}`);
+        const strata = chosen.metrics.strata.map((r) => ({ ...r, label: pretty(r.stratum) }));
+        document.getElementById("strata").append(strataChart(strata));
 
         const names = { CP: "confirmed planet", KP: "known planet", EB: "eclipsing binary", FP: "false positive" };
         document.getElementById("known").innerHTML = DATA.known
@@ -735,7 +758,11 @@
         DATA = data;
         CURVES = curves;
         document.getElementById("meta").textContent =
-          `${DATA.candidates.length.toLocaleString()} unresolved TESS candidates scored · trained on ${DATA.training.n.toLocaleString()} dispositioned TOIs · data ${DATA.generated}`;
+          `${totalCandidates().toLocaleString()} unresolved TESS candidates scored` +
+          (DATA.pipelines.length > 1
+            ? " · " + DATA.pipelines.map((p) => `${p.n_candidates.toLocaleString()} ${label(p.author)}`).join(" + ")
+            : ` · ${label(DATA.pipelines[0].author)} light curves`) +
+          ` · data ${DATA.generated}`;
         setupTabs();
         renderStats();
         renderRows();

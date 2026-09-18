@@ -56,6 +56,7 @@ def cmd_build_dataset(args: argparse.Namespace) -> None:
         timeout=args.timeout,
         labeled=not args.unlabeled,
         detection=args.detection,
+        exclude_detection=args.exclude_detection,
     )
     print(f"{len(df)} rows in {args.out}")
 
@@ -94,14 +95,23 @@ def cmd_score(args: argparse.Namespace) -> None:
 
 
 def cmd_export_demo(args: argparse.Namespace) -> None:
-    from exovet.demo import export
+    from exovet.demo import Pipeline, export
 
+    pipelines = []
+    for spec in args.pipeline:
+        author, dataset, ranked, model = spec.split(":")
+        pipelines.append(
+            Pipeline(
+                author=author,
+                dataset=pd.read_csv(dataset, dtype={"toi": str}),
+                ranked=pd.read_csv(ranked, dtype={"toi": str}),
+                model=VettingModel.load(Path(model)),
+            )
+        )
     paths = export(
         out=args.out,
-        dataset=pd.read_csv(args.dataset, dtype={"toi": str}),
-        ranked=pd.read_csv(args.ranked, dtype={"toi": str}),
+        pipelines=pipelines,
         catalog=load_toi_catalog(args.catalog),
-        model=VettingModel.load(args.model),
         curves=args.curves,
     )
     for name, path in paths.items():
@@ -145,6 +155,7 @@ def main(argv: list[str] | None = None) -> None:
     build.add_argument("--refresh", action="store_true", help="re-download the TOI catalog")
     build.add_argument("--unlabeled", action="store_true", help="undispositioned TOIs, for scoring")
     build.add_argument("--detection", help="only TOIs found by this pipeline, e.g. SPOC")
+    build.add_argument("--exclude-detection", help="skip TOIs found by this pipeline")
     build.set_defaults(func=cmd_build_dataset)
 
     tr = sub.add_parser("train", help="train the classifier")
@@ -168,11 +179,18 @@ def main(argv: list[str] | None = None) -> None:
 
     ex = sub.add_parser("export-demo", help="write the demo page's JSON data")
     ex.add_argument("--out", type=Path, default=DEFAULT_DEMO_OUT)
-    ex.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
-    ex.add_argument("--ranked", type=Path, default=Path("data/ranked.csv"))
-    ex.add_argument("--model", type=Path, default=DEFAULT_MODEL)
+    ex.add_argument(
+        "--pipeline",
+        action="append",
+        default=None,
+        metavar="AUTHOR:DATASET:RANKED:MODEL",
+        help="a pipeline to include; repeat for several",
+    )
     ex.add_argument("--curves", type=int, default=150, help="candidates to fold light curves for")
-    ex.set_defaults(func=cmd_export_demo)
+    ex.set_defaults(
+        func=cmd_export_demo,
+        pipeline=[f"SPOC:{DEFAULT_DATASET}:data/ranked.csv:{DEFAULT_MODEL}"],
+    )
 
     ev = sub.add_parser("evaluate", help="grouped CV, temporal holdout and calibration")
     ev.add_argument("--dataset", type=Path, default=DEFAULT_DATASET)
