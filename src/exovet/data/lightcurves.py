@@ -101,14 +101,31 @@ def _values(column) -> np.ndarray:
     return np.asarray(getattr(column, "value", column), dtype=float)
 
 
+def _centroid_columns(lc):
+    """The pipeline's centroid columns, whatever it calls them.
+
+    SPOC exposes centroid_col/centroid_row (MOM_CENTR1/2); QLP ships the same
+    measurement as SAP_X/SAP_Y, which lightkurve leaves as plain columns.
+    """
+    if (
+        getattr(lc, "centroid_col", None) is not None
+        and getattr(lc, "centroid_row", None) is not None
+    ):
+        return lc.centroid_col, lc.centroid_row
+    if "sap_x" in lc.columns and "sap_y" in lc.columns:
+        return lc["sap_x"], lc["sap_y"]
+    return None, None
+
+
 def centroid_series(lc) -> CentroidSeries | None:
     """Flux-weighted centroids of one sector, keeping only unflagged cadences.
 
-    None when the pipeline provides no usable centroids, as QLP does not.
+    None when the pipeline provides no usable centroids.
     """
-    if any(getattr(lc, name, None) is None for name in ("centroid_col", "centroid_row")):
+    col_column, row_column = _centroid_columns(lc)
+    if col_column is None or row_column is None:
         return None
-    col, row = _values(lc.centroid_col), _values(lc.centroid_row)
+    col, row = _values(col_column), _values(row_column)
     if np.all(np.isnan(col)) or np.all(np.isnan(row)):
         return None
     good = np.asarray(lc.quality) == 0

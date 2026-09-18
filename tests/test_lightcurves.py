@@ -19,13 +19,22 @@ class FakeSearch(list):
 
 
 class FakeLightCurve:
-    def __init__(self, centroids=True, nan_centroids=False):
+    def __init__(self, centroids=True, nan_centroids=False, qlp_names=False):
         self.quality = np.zeros(5, dtype=int)
         self.time = type("T", (), {"value": np.arange(5.0)})()
-        if centroids:
-            values = np.full(5, np.nan) if nan_centroids else np.arange(5.0)
+        self.columns = []
+        if not centroids:
+            return
+        values = np.full(5, np.nan) if nan_centroids else np.arange(5.0)
+        if qlp_names:  # QLP calls its centroids SAP_X / SAP_Y
+            self.columns = ["sap_x", "sap_y"]
+            self._cols = {"sap_x": values, "sap_y": values + 10}
+        else:
             self.centroid_col = type("C", (), {"value": values})()
             self.centroid_row = type("C", (), {"value": values + 10})()
+
+    def __getitem__(self, key):
+        return self._cols[key]
 
 
 def test_falls_back_to_next_pipeline(monkeypatch):
@@ -58,7 +67,8 @@ def test_sector_cap_limits_downloads(monkeypatch):
     ("lc", "expected"),
     [
         (FakeLightCurve(), True),
-        (FakeLightCurve(centroids=False), False),  # QLP: no centroid columns
+        (FakeLightCurve(qlp_names=True), True),  # QLP names them SAP_X / SAP_Y
+        (FakeLightCurve(centroids=False), False),
         (FakeLightCurve(nan_centroids=True), False),
     ],
 )
